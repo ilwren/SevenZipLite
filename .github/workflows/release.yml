@@ -110,7 +110,37 @@ jobs:
       # published fine).
       fail-fast: false
       matrix:
-        rid: [win-x64, win-x86]
+        # 显式把 rid 和 platformTarget 配对，而不是让 csproj 在发布时自己从
+        # RuntimeIdentifier 反推 PlatformTarget —— 那种反推在 csproj 内部依赖的
+        # $(RuntimeIdentifier) 属性，在 `dotnet publish -r` 场景下实际是由
+        # $(PublishRuntimeIdentifier) 在 SDK 最底部的 Sdk.targets 里才拷贝过去的，
+        # 时机晚于 csproj 主体里的 PropertyGroup 求值，导致反推判断永远拿到空值、
+        # 从而被 SDK 自带的默认值兜底成 x64（这是真实踩过的坑：win-x86 那一路在
+        # Windows Runner 上必现 "RuntimeIdentifier platform 'win-x86' and the
+        # PlatformTarget 'x64' must be compatible."，即使 csproj 里已经写了根据
+        # RuntimeIdentifier 反推的逻辑）。这里直接用 -p:PlatformTarget=... 传一个
+        # 真正的命令行全局属性，从求值最开始就生效，不受任何导入顺序影响，从根上
+        # 绕开这个时机问题。
+        #
+        # Explicitly pair rid with platformTarget here instead of letting the csproj
+        # infer PlatformTarget from RuntimeIdentifier at publish time — that inference
+        # relies on $(RuntimeIdentifier) inside the csproj, but for `dotnet publish -r`
+        # it's actually $(PublishRuntimeIdentifier) that's set on the command line; the
+        # SDK only copies it into $(RuntimeIdentifier) inside Sdk.targets, which is
+        # imported at the very bottom — later than the PropertyGroup in the csproj body.
+        # So the inference in the csproj always sees an empty $(RuntimeIdentifier) and
+        # never fires, and the SDK's own default fills in PlatformTarget=x64 instead
+        # (a real bug we hit: the win-x86 leg failed every time on the Windows runner
+        # with "RuntimeIdentifier platform 'win-x86' and the PlatformTarget 'x64' must
+        # be compatible.", even though the csproj already had RID-based inference logic).
+        # Passing -p:PlatformTarget=... here is a genuine command-line global property,
+        # effective from the very start of evaluation regardless of import order, which
+        # sidesteps this timing issue entirely.
+        include:
+          - rid: win-x64
+            platformTarget: x64
+          - rid: win-x86
+            platformTarget: x86
     steps:
       - uses: actions/checkout@v4
 
@@ -124,6 +154,7 @@ jobs:
           -c Release -r ${{ matrix.rid }} --self-contained true
           -p:Version=${{ needs.setup.outputs.version }}
           -p:PublishSingleFile=false
+          -p:PlatformTarget=${{ matrix.platformTarget }}
           -o publish/${{ matrix.rid }}
 
       - name: Zip artifact
