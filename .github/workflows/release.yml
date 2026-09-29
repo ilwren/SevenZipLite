@@ -101,6 +101,14 @@ jobs:
     runs-on: windows-latest
     needs: setup
     strategy:
+      # fail-fast: false —— 两个 RID（win-x64/win-x86）互相独立，一个失败不应该连带取消
+      # 另一个正在跑的 job（默认 fail-fast: true 会这么做，之前 win-x86 失败时就顺带把
+      # win-x64 取消掉了，掩盖了 win-x64 本身其实是可以正常发布的）。
+      # fail-fast: false — the two RIDs (win-x64/win-x86) are independent; one failing
+      # shouldn't cancel the other still-running job (the default fail-fast: true did
+      # exactly that when win-x86 failed, hiding the fact that win-x64 itself would have
+      # published fine).
+      fail-fast: false
       matrix:
         rid: [win-x64, win-x86]
     steps:
