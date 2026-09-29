@@ -1,0 +1,157 @@
+<Window x:Class="SevenZipLite.WpfDemo.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SevenZipLite WPF 演示 (win-x64 / win-x86)"
+        Height="760" Width="920" MinHeight="600" MinWidth="700">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="16">
+
+            <TextBlock x:Name="HeaderLabel" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"
+                       TextWrapping="Wrap" />
+            <TextBlock Text="本项目专门用于在真实 Windows 环境里验证裁剪版 7-Zip 原生库（7zlite.dll）+ 纯 C# P/Invoke 封装（SevenZipLite 类库）在 win-x64 / win-x86 两个 RID 上是否可用，覆盖 7z / zip / tar / tar.gz 四种格式及其分卷、7z/zip 密码。"
+                       TextWrapping="Wrap" Foreground="Gray" Margin="0,0,0,16" />
+
+            <!-- ===================== 区块一：内置往返自检 ===================== -->
+            <GroupBox Header="1. 内置往返自检（与 Linux 控制台 / Android 真机共用同一套用例）" Padding="10" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock TextWrapping="Wrap" Foreground="Gray" Margin="0,0,0,8"
+                               Text="自动生成测试文件 -&gt; 打包 -&gt; 列出条目 -&gt; 解压 -&gt; 逐字节比对，覆盖 7z/zip/tar/tar.gz × 是否分卷 × 是否密码 共 11 个用例（SevenZipLite.SelfTest 项目，与 SevenZipLite.Tests / SevenZipLite.MauiDemo 完全共享同一份代码）。" />
+                    <DockPanel Margin="0,0,0,8">
+                        <Button x:Name="SelfTestButton" Content="运行自检" Width="120" Height="30"
+                                Click="OnRunSelfTestClicked" DockPanel.Dock="Left" />
+                        <TextBlock x:Name="SelfTestSummaryLabel" Margin="12,0,0,0" VerticalAlignment="Center"
+                                   TextWrapping="Wrap" />
+                    </DockPanel>
+                    <TextBox x:Name="SelfTestLogBox" Height="220" IsReadOnly="True"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                             TextWrapping="NoWrap" FontFamily="Consolas" AcceptsReturn="True" />
+                </StackPanel>
+            </GroupBox>
+
+            <!-- ===================== 区块二：手动压缩/解压体验 ===================== -->
+            <GroupBox Header="2. 手动压缩 / 解压体验（真实选择磁盘文件，非合成测试数据）" Padding="10">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,8">
+                        <Button x:Name="PickFilesButton" Content="选择文件…" Width="120" Height="28"
+                                Click="OnPickFilesClicked" DockPanel.Dock="Left" />
+                        <TextBlock x:Name="PickedFilesLabel" Margin="12,0,0,0" VerticalAlignment="Center"
+                                   TextWrapping="Wrap" Text="尚未选择文件" />
+                    </DockPanel>
+
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="20" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="20" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="120" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0" Text="格式:" VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <ComboBox x:Name="FormatCombo" Grid.Column="1" SelectedIndex="0">
+                            <ComboBoxItem Content="7z" />
+                            <ComboBoxItem Content="zip" />
+                            <ComboBoxItem Content="tar" />
+                            <ComboBoxItem Content="tar.gz" />
+                        </ComboBox>
+
+                        <TextBlock Grid.Column="3" Text="密码(可空, 仅 7z/zip 生效):" VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <PasswordBox x:Name="PasswordBox" Grid.Column="4" />
+
+                        <TextBlock Grid.Column="6" Text="分卷大小(字节, 0=不分卷):" VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <TextBox x:Name="VolumeSizeBox" Grid.Column="7" Text="0" />
+                    </Grid>
+
+                    <DockPanel Margin="0,0,0,8">
+                        <Button x:Name="PackButton" Content="压缩" Width="120" Height="28" IsEnabled="False"
+                                Click="OnPackClicked" DockPanel.Dock="Left" Margin="0,0,8,0" />
+                        <Button x:Name="ExtractButton" Content="解压 + 校验" Width="140" Height="28" IsEnabled="False"
+                                Click="OnExtractClicked" DockPanel.Dock="Left" />
+                    </DockPanel>
+
+                    <TextBox x:Name="ManualLogBox" Height="200" IsReadOnly="True"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                             TextWrapping="NoWrap" FontFamily="Consolas" AcceptsReturn="True" />
+                </StackPanel>
+            </GroupBox>
+
+            <!-- ===================== 区块三：大文件吞吐量测试 ===================== -->
+            <GroupBox Header="3. 大文件吞吐量测试（合成数据，观察压缩/解压速度）" Padding="10" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock TextWrapping="Wrap" Foreground="Gray" Margin="0,0,0,8"
+                               Text="在临时目录生成一个体积可指定（建议 ≤1024MB）的合成大文件——按 4MB 块交替混合高度可压缩的重复文本片段与不可压缩的随机噪声，模拟真实世界中等压缩比的大文件——然后分别计时压缩与解压，并用 SHA-256 校验解压结果与原始文件字节级一致。测试完成后会自动清理生成的文件。" />
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="20" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="120" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="大小(MB, 建议≤1024):" VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <TextBox x:Name="PerfSizeBox" Grid.Column="1" Text="512" />
+                        <TextBlock Grid.Column="3" Text="格式:" VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <ComboBox x:Name="PerfFormatCombo" Grid.Column="4" SelectedIndex="0">
+                            <ComboBoxItem Content="7z" />
+                            <ComboBoxItem Content="zip" />
+                            <ComboBoxItem Content="tar" />
+                            <ComboBoxItem Content="tar.gz" />
+                        </ComboBox>
+                    </Grid>
+                    <DockPanel Margin="0,0,0,8">
+                        <Button x:Name="PerfTestButton" Content="运行性能测试" Width="120" Height="30"
+                                Click="OnRunPerfTestClicked" DockPanel.Dock="Left" />
+                        <TextBlock x:Name="PerfTestSummaryLabel" Margin="12,0,0,0" VerticalAlignment="Center"
+                                   TextWrapping="Wrap" />
+                    </DockPanel>
+                    <TextBox x:Name="PerfTestLogBox" Height="180" IsReadOnly="True"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                             TextWrapping="NoWrap" FontFamily="Consolas" AcceptsReturn="True" />
+                </StackPanel>
+            </GroupBox>
+
+            <!-- ===================== 区块四：多线程压力测试 ===================== -->
+            <GroupBox Header="4. 多线程压力测试（多轮往返，排查并发相关的偶发问题）" Padding="10" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock TextWrapping="Wrap" Foreground="Gray" Margin="0,0,0,8"
+                               Text="反复创建一个包含若干个中小文件的归档、解压、逐文件 SHA-256 校验，用来验证多线程压缩路径（mt&gt;1）在较多文件/较多轮次下是否稳定。这是独立于上面“内置自检”之外的可选诊断项，不属于正确性自检的一部分。" />
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="20" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="20" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="120" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="每轮文件数:" VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <TextBox x:Name="StressFileCountBox" Grid.Column="1" Text="20" />
+                        <TextBlock Grid.Column="3" Text="轮数:" VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <TextBox x:Name="StressIterationsBox" Grid.Column="4" Text="15" />
+                        <TextBlock Grid.Column="6" Text="格式:" VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <ComboBox x:Name="StressFormatCombo" Grid.Column="7" SelectedIndex="0">
+                            <ComboBoxItem Content="7z" />
+                            <ComboBoxItem Content="zip" />
+                            <ComboBoxItem Content="tar" />
+                        </ComboBox>
+                    </Grid>
+                    <DockPanel Margin="0,0,0,8">
+                        <Button x:Name="StressTestButton" Content="运行压力测试" Width="120" Height="30"
+                                Click="OnRunStressTestClicked" DockPanel.Dock="Left" />
+                        <TextBlock x:Name="StressTestSummaryLabel" Margin="12,0,0,0" VerticalAlignment="Center"
+                                   TextWrapping="Wrap" />
+                    </DockPanel>
+                    <TextBox x:Name="StressTestLogBox" Height="180" IsReadOnly="True"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                             TextWrapping="NoWrap" FontFamily="Consolas" AcceptsReturn="True" />
+                </StackPanel>
+            </GroupBox>
+
+        </StackPanel>
+    </ScrollViewer>
+</Window>

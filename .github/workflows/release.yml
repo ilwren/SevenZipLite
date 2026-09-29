@@ -1,0 +1,225 @@
+name: Release
+
+# 触发条件 / Trigger:
+#   推送形如 v1.2.3 / v1.2.3-rc.1 的 tag 时自动运行。
+#   Runs automatically when a tag matching v1.2.3 / v1.2.3-rc.1 is pushed.
+#
+# 产物 / Artifacts published to the GitHub Release:
+#   - SevenZipLite.Native.<version>.nupkg / .snupkg  (NuGet 包 / NuGet package)
+#   - SevenZipLite.WpfDemo-win-x64.zip
+#   - SevenZipLite.WpfDemo-win-x86.zip
+#   - SevenZipLite.MauiDemo.apk           (未签名 / unsigned)
+#
+# nuget.org 发布 / nuget.org publish:
+#   默认关闭。只有当仓库 Secrets 里配置了 NUGET_API_KEY 时才会执行推送。
+#   Disabled by default. Only runs if NUGET_API_KEY is configured in repo Secrets.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不含 v 前缀，如 1.0.0）/ Version (without leading v, e.g. 1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+
+jobs:
+  # ---------------------------------------------------------------------
+  # 1. 提取版本号 / Resolve the version number used by every other job.
+  # ---------------------------------------------------------------------
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------
+  # 2. Linux 自测：正确性 + 多线程压力测试，作为发布前质量门槛。
+  #    Linux self-tests: correctness + multi-threading stress test, gating the release.
+  # ---------------------------------------------------------------------
+  test-linux:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Run self-test (13 correctness cases)
+        run: dotnet run --project tests/SevenZipLite.Tests -c Release
+
+      - name: Run multi-threading stress test
+        run: dotnet run --project tests/SevenZipLite.Tests -c Release -- --stress
+
+  # ---------------------------------------------------------------------
+  # 3. 打包 NuGet 包 / Pack the NuGet package.
+  # ---------------------------------------------------------------------
+  pack-nuget:
+    runs-on: ubuntu-latest
+    needs: [setup, test-linux]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Pack SevenZipLite.Native
+        run: |
+          chmod +x scripts/pack-nuget.sh
+          ./scripts/pack-nuget.sh "${{ needs.setup.outputs.version }}" ./artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-package
+          path: |
+            artifacts/*.nupkg
+            artifacts/*.snupkg
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # 4. 发布 WPF Demo（win-x64 / win-x86）/ Publish the WPF demo.
+  # ---------------------------------------------------------------------
+  publish-wpf:
+    runs-on: windows-latest
+    needs: setup
+    strategy:
+      matrix:
+        rid: [win-x64, win-x86]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish WPF demo (${{ matrix.rid }})
+        run: >
+          dotnet publish samples/SevenZipLite.WpfDemo/SevenZipLite.WpfDemo.csproj
+          -c Release -r ${{ matrix.rid }} --self-contained true
+          -p:Version=${{ needs.setup.outputs.version }}
+          -p:PublishSingleFile=false
+          -o publish/${{ matrix.rid }}
+
+      - name: Zip artifact
+        run: Compress-Archive -Path publish/${{ matrix.rid }}/* -DestinationPath SevenZipLite.WpfDemo-${{ matrix.rid }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wpf-demo-${{ matrix.rid }}
+          path: SevenZipLite.WpfDemo-${{ matrix.rid }}.zip
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # 5. 构建 MAUI (Android) Demo APK / Build the MAUI (Android) demo APK.
+  # ---------------------------------------------------------------------
+  build-maui:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install MAUI Android workload
+        run: dotnet workload install maui-android
+
+      - name: Build Android APK (unsigned Release)
+        run: >
+          dotnet build samples/SevenZipLite.MauiDemo/SevenZipLite.MauiDemo.csproj
+          -f net10.0-android -c Release
+          -p:Version=${{ needs.setup.outputs.version }}
+          -p:AndroidPackageFormat=apk
+
+      - name: Locate APK
+        id: apk
+        shell: bash
+        run: |
+          apk_path=$(find samples/SevenZipLite.MauiDemo -iname "*.apk" | head -n 1)
+          echo "找到 / found: $apk_path"
+          cp "$apk_path" SevenZipLite.MauiDemo.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maui-demo-apk
+          path: SevenZipLite.MauiDemo.apk
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # 6. 创建 GitHub Release 并附上所有产物 / Create the GitHub Release with all assets.
+  # ---------------------------------------------------------------------
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [setup, pack-nuget, publish-wpf, build-maui]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+
+      - name: Flatten downloaded artifacts
+        run: |
+          mkdir -p release-assets
+          find downloaded -type f \( -name "*.nupkg" -o -name "*.snupkg" -o -name "*.zip" -o -name "*.apk" \) \
+            -exec cp {} release-assets/ \;
+          ls -la release-assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "SevenZipLite v${{ needs.setup.outputs.version }}"
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: release-assets/*
+          draft: false
+          prerelease: ${{ contains(needs.setup.outputs.version, '-') }}
+
+  # ---------------------------------------------------------------------
+  # 7.（可选，默认不执行）推送到 nuget.org。
+  #    (Optional, off by default) Push to nuget.org.
+  #    只有仓库 Secrets 中配置了 NUGET_API_KEY 才会运行；用户当前未要求启用此步骤。
+  #    Only runs if NUGET_API_KEY is configured in repo Secrets; not requested to be
+  #    enabled right now by the maintainer.
+  # ---------------------------------------------------------------------
+  publish-nuget-org:
+    runs-on: ubuntu-latest
+    needs: [pack-nuget, create-release]
+    if: ${{ secrets.NUGET_API_KEY != '' }}
+    env:
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: artifacts
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Push to nuget.org
+        run: |
+          dotnet nuget push "artifacts/*.nupkg" \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate

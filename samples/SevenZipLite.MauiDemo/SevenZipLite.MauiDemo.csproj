@@ -1,0 +1,109 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<!--
+		  本演示项目的唯一目的是验证"官方 7-Zip 原生库 + 纯 C# P/Invoke 封装"方案在 Android 上
+		  的技术可行性（见 docs/investigation-report.zh-CN.md 调查报告的结论与本仓库约定的范围：
+		  仅 7z/zip/tar/tar.gz + 分卷 + 密码，不引入 Java/JNI）。因此这里只保留 net10.0-android
+		  一个目标框架，
+		  不像默认模板那样同时生成 iOS / MacCatalyst / Windows 目标（这些平台既不在本项目范围内，
+		  也没有安装对应的 workload）。
+		-->
+		<TargetFrameworks>net10.0-android</TargetFrameworks>
+
+		<OutputType>Exe</OutputType>
+		<RootNamespace>SevenZipLite.MauiDemo</RootNamespace>
+		<UseMaui>true</UseMaui>
+		<SingleProject>true</SingleProject>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+
+		<!-- Display name -->
+		<ApplicationTitle>SevenZipLite.MauiDemo</ApplicationTitle>
+
+		<!-- App Identifier -->
+		<ApplicationId>com.companyname.sevenziplite.mauidemo</ApplicationId>
+
+		<!-- Versions -->
+		<ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+		<ApplicationVersion>1</ApplicationVersion>
+
+		<!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
+		<WindowsPackageType>None</WindowsPackageType>
+
+		<!-- 与原生库交叉编译时使用的 API 21 (Android 5.0) 保持一致，见 build_android.sh/.ps1 里的 $API 变量；
+		     但下面为了启用 CoreCLR 运行时把它提到了 24，二者不冲突：NDK 编译 .so 时选的 API 21 只是
+		     "原生库要求的最低系统版本"（向前兼容，21 编译的 .so 在 24+ 系统上照常能跑），
+		     这里的 SupportedOSPlatformVersion 是"整个 App 的最低系统版本"，是另一个独立的概念。 -->
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
+
+		<!--
+		  真机实测发现的严重问题（已修复，详见 demo/README.md 与调查报告 8.7 节）：
+		  .NET for Android 默认使用 Mono 运行时，而 Mono 完全不支持 System.Runtime.InteropServices.ComWrappers
+		  （即本项目 SevenZipLite 类库赖以工作的 Source-Generated COM 机制的底层依赖）——调用任何一个
+		  P/Invoke 出来的 COM 接口都会抛 System.PlatformNotSupportedException: Operation is not supported
+		  on this platform，堆栈定位在 ComWrappers.GetOrCreateObjectForComInstance。这是 Mono 运行时本身
+		  的能力缺口，不是本项目代码的 bug，无法通过修改 SevenZipLite/ZipHandler 等代码绕过。
+
+		  修复方式：.NET 10 起 .NET for Android 新增了一个实验性的 CoreCLR 运行时选项（微软官方文档：
+		  https://github.com/dotnet/docs-maui/blob/main/docs/whats-new/dotnet-10.md ，
+		  官方原话："(Experimental) CoreCLR — Enables Android apps to run on the CoreCLR runtime
+		  (instead of Mono)."），设置 UseMonoRuntime=false 即可切换整个 App 用 CoreCLR 运行——CoreCLR
+		  完整实现了 ComWrappers（本项目 host 端 Linux 控制台自检用的正是同一个 CoreCLR，11/11 通过），
+		  切换运行时后不需要改动 SevenZipLite 类库或原生库的任何一行代码。
+
+		  已知代价（微软官方文档原话）："Expect that application size is currently larger than with Mono
+		  and that debugging and some runtime diagnostics are not fully functional yet... This is an
+		  experimental feature and not intended for production use."——即截至 .NET 10，这仍是一个官方标注
+		  为"实验性、不建议生产环境使用"的选项；根据微软已公开的方向，.NET 11 会把 CoreCLR 转为 Android/iOS/
+		  Mac Catalyst 的默认运行时（Mono 变成需要显式选择的兼容选项），届时这个问题会自然消失，不需要再手动
+		  设置这个属性。本项目按用户要求固定使用 net10.0，所以现阶段只能先用这个实验性开关来解决。
+		-->
+		<UseMonoRuntime Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">false</UseMonoRuntime>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- App Icon -->
+		<MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#512BD4" />
+
+		<!-- Splash Screen -->
+		<MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#512BD4" BaseSize="128,128" />
+
+		<!-- Images -->
+		<MauiImage Include="Resources\Images\*" />
+		<MauiImage Update="Resources\Images\dotnet_bot.png" Resize="True" BaseSize="300,185" />
+		
+		<!-- Custom Fonts -->
+		<MauiFont Include="Resources\Fonts\*" />
+
+		<!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
+		<MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\SevenZipLite\SevenZipLite.csproj" />
+		<ProjectReference Include="..\..\tests\SevenZipLite.SelfTest\SevenZipLite.SelfTest.csproj" />
+	</ItemGroup>
+
+	<!--
+	  官方未裁剪 7-Zip 原生库（lib7zlite.so），用 native/7zip-src/CPP/7zip/Bundles/Format7zF/
+	  下的构建脚本针对 4 个 Android ABI 交叉编译产出（build_android.sh/.ps1 尚未提供，见仓库根
+	  README"已知缺口"一节），按 Android ABI 目录名（arm64-v8a / armeabi-v7a / x86_64 / x86）
+	  分类存放在本项目下。<AndroidNativeLibrary> 会依据父目录名自动识别 ABI 并打进 APK 的
+	  lib/<abi>/ 下——这个目录结构不能改成 RID 风格命名，所以这里放的是独立拷贝，不是到仓库根
+	  native-libs/ 的 Link；仓库根 native-libs/android-*/ 下是给 NuGet 打包脚本用的镜像副本，
+	  两边内容需要保持一致，见 native-libs/README.md。
+	-->
+	<ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'android'">
+		<AndroidNativeLibrary Include="NativeLibs\arm64-v8a\lib7zlite.so" />
+		<AndroidNativeLibrary Include="NativeLibs\armeabi-v7a\lib7zlite.so" />
+		<AndroidNativeLibrary Include="NativeLibs\x86_64\lib7zlite.so" />
+		<AndroidNativeLibrary Include="NativeLibs\x86\lib7zlite.so" />
+	</ItemGroup>
+
+</Project>

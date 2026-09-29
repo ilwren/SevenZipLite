@@ -1,0 +1,39 @@
+# ==================== .NET 构建产物 / .NET build output ====================
+bin/
+obj/
+out/
+artifacts/
+*.user
+*.suo
+
+# ==================== IDE ====================
+.vs/
+.vscode/
+*.userosscache
+*.sln.docstates
+.idea/
+*.DotSettings.user
+
+# ==================== NuGet ====================
+*.nupkg
+*.snupkg
+.nuget/
+
+# ==================== 原生库编译中间产物 / native build intermediates ====================
+native/7zip-src/**/_o/
+native/7zip-src/**/_o_*/
+native/7zip-src/**/*.o
+native/7zip-src/**/*.obj
+
+# ==================== Android / MAUI ====================
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# ==================== 系统/编辑器杂项 / OS & editor cruft ====================
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*~

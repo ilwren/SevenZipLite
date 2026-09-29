@@ -1,0 +1,40 @@
+﻿<Project>
+
+  <!--
+    全仓库共享的项目元数据。只有 src/SevenZipLite（打包成 NuGet 包的那个项目）会真正
+    用到 Package* 系列属性；其余项目（tests/samples/tools）不受影响，但共享版权/作者信息
+    保持一致，是"正式项目"的常见做法。
+
+    Shared metadata for every project in this repo. Only src/SevenZipLite (the one that
+    gets packed into the NuGet package) actually consumes the Package* properties below;
+    other projects (tests/samples/tools) are unaffected by them but still share the same
+    copyright/author info for consistency.
+  -->
+  <PropertyGroup>
+    <Authors>ilwren</Authors>
+    <Company>ilwren</Company>
+    <Product>SevenZipLite</Product>
+    <Copyright>Copyright (c) 2026 ilwren</Copyright>
+
+    <RepositoryUrl>https://github.com/ilwren/SevenZipLite</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/ilwren/SevenZipLite</PackageProjectUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <!--
+      版本号的唯一权威来源。本地开发/PR 构建用这个默认值；正式发布由
+      .github/workflows/release.yml 在 `dotnet pack`/`dotnet publish` 时通过
+      `-p:Version=x.y.z`（从 Git tag 解析）覆盖，见该 workflow 文件的注释。
+      CHANGELOG.md 记录每个版本号对应的实际改动。
+
+      Single authoritative source for the version number. Local/PR builds use this
+      default; official releases override it via `-p:Version=x.y.z` (parsed from the
+      Git tag) in .github/workflows/release.yml — see that file's comments.
+      CHANGELOG.md records what changed in each version.
+    -->
+    <Version Condition="'$(Version)' == ''">0.1.0</Version>
+
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+</Project>

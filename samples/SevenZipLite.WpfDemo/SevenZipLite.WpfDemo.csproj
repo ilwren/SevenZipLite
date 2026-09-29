@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!--
+      WPF 只能跑在 Windows 上，TargetFramework 必须带 "-windows" 后缀（否则
+      UseWPF 不生效）。这是本仓库里第一个、也是唯一一个 Windows-only 的项目：
+      MAUI 演示项目保持 Android-only 不变，Windows 桌面验证专门由本项目承担。
+
+      TargetFramework 保持 net10.0-windows（>= net9.0-windows 即可）是因为 App.xaml 里用到
+      了 .NET 9 才引入的 WPF Fluent 主题 ThemeMode="System" API（见 App.xaml 顶部注释），
+      低于 net9.0-windows 的目标框架不存在该属性，编译会失败。
+
+      Kept at net10.0-windows (>= net9.0-windows is required) because App.xaml uses the WPF
+      Fluent theme's ThemeMode="System" API, introduced in .NET 9 (see the comment at the top
+      of App.xaml) — targeting below net9.0-windows would fail to compile since that property
+      doesn't exist there.
+    -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SevenZipLite.WpfDemo</RootNamespace>
+    <!--
+      win-x64 / win-x86 是本项目要验证的两个目标；不用 AnyCPU 是因为下面按
+      $(PlatformTarget) 选择拷贝 x64 还是 x86 版 7zlite.dll，需要一个确定的位数。
+      在 Visual Studio 里可以直接从"解决方案平台"下拉框切换 x64 / x86 来分别验证
+      两个架构，不需要发布(publish)、直接 F5 调试即可。
+    -->
+    <Platforms>x64;x86</Platforms>
+    <PlatformTarget Condition="'$(PlatformTarget)' == ''">x64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SevenZipLite\SevenZipLite.csproj" />
+    <ProjectReference Include="..\..\tests\SevenZipLite.SelfTest\SevenZipLite.SelfTest.csproj" />
+  </ItemGroup>
+
+  <!--
+    原生库分发策略：win-x64/win-x86 的 7zlite.dll 就是 7-zip.org 官方发布的原版 7z.dll
+    改名而来，不需要任何构建脚本（见仓库根 native-libs/README.md）。这里按
+    $(PlatformTarget) 把对应架构那一份，以扁平文件名 "7zlite.dll" 复制到输出目录根——
+    [LibraryImport("7zlite")]（见 SevenZipLite/Native/NativeMethods.cs）依赖 .NET
+    默认的原生库探测规则，会在输出目录根查找 "7zlite.dll"，因此不需要自定义
+    DllImportResolver。
+
+    用 Condition="Exists(...)" 是因为 native-libs/ 下的二进制不一定总是存在（例如全新
+    clone 但还没跑任何构建/下载步骤时）；没有产物时跳过拷贝，此时直接运行本项目会在
+    调用原生方法时抛 DllNotFoundException，报错信息里已经提示了应该怎么获取 7zlite.dll
+    （见 MainWindow.xaml.cs 里的异常处理与用户提示文案）。
+  -->
+  <ItemGroup Condition="'$(PlatformTarget)' != 'x86' And Exists('..\..\native-libs\win-x64\7zlite.dll')">
+    <None Include="..\..\native-libs\win-x64\7zlite.dll">
+      <Link>7zlite.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup Condition="'$(PlatformTarget)' == 'x86' And Exists('..\..\native-libs\win-x86\7zlite.dll')">
+    <None Include="..\..\native-libs\win-x86\7zlite.dll">
+      <Link>7zlite.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
+

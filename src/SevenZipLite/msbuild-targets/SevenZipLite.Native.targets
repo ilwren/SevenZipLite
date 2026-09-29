@@ -1,0 +1,71 @@
+<Project>
+  <!--
+    背景 / Background
+    ==================
+    中文：NuGet 的 "runtimes/{rid}/native/*" 资源只有在消费方项目声明了
+    RuntimeIdentifier（或发布为 self-contained / 单文件）时才会被自动复制到输出目录，
+    这是 .NET SDK 的既有行为，不是本包的 bug。为了让"没有指定 RID 的普通
+    `dotnet run`/`dotnet build`"（本仓库自己的 Linux 控制台 Demo、以及大多数开发者
+    F5 调试 WPF 应用时的典型场景）也能自动拿到正确的原生库，这个文件在**每次构建**时
+    根据当前是 Windows 还是 Linux、进程位数是多少，从本包的 runtimes/ 目录里挑一个
+    对应的原生库复制到输出目录根。
+
+    English: NuGet's "runtimes/{rid}/native/*" assets are only auto-copied to the
+    output directory when the consuming project declares a RuntimeIdentifier (or
+    publishes self-contained / as a single file) — this is inherent .NET SDK
+    behavior, not a bug in this package. To make plain, non-RID
+    `dotnet run`/`dotnet build` (this repo's own Linux console demo, and the common
+    case of F5-debugging a WPF app) work out of the box too, this file copies the
+    matching native binary from this package's own runtimes/ folder to the output
+    directory root on **every build**, based on the current OS and process bitness.
+
+    局限 / Limitations
+    ==================
+    - 只覆盖 win-x64 / win-x86 / win-arm64 / linux-x64 四个桌面向 RID；Android 不在这里
+      处理——.NET for Android 项目请参照 samples/SevenZipLite.MauiDemo 用
+      <AndroidNativeLibrary> 显式引入对应 ABI 目录下的 lib7zlite.so（AndroidNativeLibrary
+      的 ABI 识别依赖字面目录名，不是这里能通用处理的场景）。
+    - 只覆盖“为当前构建机器生成本机可执行”的场景；如果你是交叉发布（例如在 macOS 上
+      `dotnet publish -r win-x64`），请显式设置 RuntimeIdentifier，让标准的
+      "runtimes/{rid}/native/*" 机制接管，不要依赖这个 .targets 文件按"当前机器"猜测。
+
+    - Only covers the four desktop RIDs win-x64 / win-x86 / win-arm64 / linux-x64;
+      Android is intentionally not handled here — for .NET for Android projects, see
+      samples/SevenZipLite.MauiDemo and use <AndroidNativeLibrary> to explicitly pull
+      in the right lib7zlite.so from its ABI-named directory (AndroidNativeLibrary's
+      ABI detection depends on the literal directory name, which this generic
+      by-current-OS copy can't replicate).
+    - Only applies to "produce a native executable for the machine currently
+      building". If you are cross-publishing (e.g. `dotnet publish -r win-x64` from
+      macOS), set RuntimeIdentifier explicitly and let the standard
+      "runtimes/{rid}/native/*" mechanism take over instead of relying on this file's
+      "guess from the current machine" logic.
+  -->
+  <PropertyGroup>
+    <_SevenZipLiteNativeRid Condition="'$(_SevenZipLiteNativeRid)' == '' And $([MSBuild]::IsOSPlatform('Windows')) And '$(PlatformTarget)' == 'x86'">win-x86</_SevenZipLiteNativeRid>
+    <_SevenZipLiteNativeRid Condition="'$(_SevenZipLiteNativeRid)' == '' And $([MSBuild]::IsOSPlatform('Windows')) And '$(PlatformTarget)' == 'ARM64'">win-arm64</_SevenZipLiteNativeRid>
+    <_SevenZipLiteNativeRid Condition="'$(_SevenZipLiteNativeRid)' == '' And $([MSBuild]::IsOSPlatform('Windows')) And '$(PlatformTarget)' == '' And '$(Platform)' == 'x86'">win-x86</_SevenZipLiteNativeRid>
+    <_SevenZipLiteNativeRid Condition="'$(_SevenZipLiteNativeRid)' == '' And $([MSBuild]::IsOSPlatform('Windows'))">win-x64</_SevenZipLiteNativeRid>
+    <_SevenZipLiteNativeRid Condition="'$(_SevenZipLiteNativeRid)' == '' And $([MSBuild]::IsOSPlatform('Linux'))">linux-x64</_SevenZipLiteNativeRid>
+
+    <_SevenZipLiteNativeFile Condition="$([MSBuild]::IsOSPlatform('Windows'))">7zlite.dll</_SevenZipLiteNativeFile>
+    <_SevenZipLiteNativeFile Condition="!$([MSBuild]::IsOSPlatform('Windows'))">lib7zlite.so</_SevenZipLiteNativeFile>
+
+    <_SevenZipLiteNativeSource>$(MSBuildThisFileDirectory)..\runtimes\$(_SevenZipLiteNativeRid)\native\$(_SevenZipLiteNativeFile)</_SevenZipLiteNativeSource>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(_SevenZipLiteNativeRid)' != '' And Exists('$(_SevenZipLiteNativeSource)') And '$(RuntimeIdentifier)' == ''">
+    <!--
+      只在消费方**没有**自己指定 RuntimeIdentifier 时才由这里兜底拷贝——一旦对方指定了
+      RuntimeIdentifier，标准的 runtimes/ 解析机制会自己处理，这里重复拷贝反而可能引入
+      "两份不同来源但同名"文件互相覆盖的困惑，所以显式避让。
+
+      Only fall back to copying here when the consumer has NOT set a
+      RuntimeIdentifier of their own — once they do, the standard runtimes/
+      resolution mechanism takes over, and copying here too could confusingly
+      overwrite it with a same-named file from a different resolution path, so we
+      explicitly step aside.
+    -->
+    <None Include="$(_SevenZipLiteNativeSource)" CopyToOutputDirectory="PreserveNewest" Link="$(_SevenZipLiteNativeFile)" Visible="false" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,143 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>SevenZipLite</RootNamespace>
+    <AssemblyName>SevenZipLite</AssemblyName>
+    <!--
+      本类库是跨平台的多目标程序集（net8.0 + net10.0），同时支持 Linux / Android
+      （wchar_t 4 字节、7-Zip 自造 UTF-32 BSTR）和 Windows（wchar_t 2 字节、真正的
+      OLE BSTR）。两套原生 ABI 的差异（字符串编码/分配器、PROPVARIANT 结构体大小）在
+      Native/Utf32Marshal.cs 和 Native/PropVariant.cs 里用 OperatingSystem.IsWindows()
+      运行时分派处理，不需要也不应该按平台单独编译出不同的程序集。
+
+      同时保留 net8.0（当前仍受支持的 LTS 版本）是为了让还没升级到 .NET 9/10 的消费方
+      也能直接引用本包；两个目标框架共用完全相同的源码，没有 #if 条件编译分支——本库
+      用到的 Source-Generated P/Invoke（LibraryImport）、ComWrappers 等 API 自 .NET 7
+      起就已可用，net8.0/net10.0 之间没有需要区分的行为差异。
+
+      This library is a cross-platform, multi-targeted assembly (net8.0 + net10.0),
+      supporting both Linux/Android (4-byte wchar_t, 7-Zip's own UTF-32 BSTR emulation)
+      and Windows (2-byte wchar_t, real OLE BSTR). The native ABI differences (string
+      encoding/allocator, PROPVARIANT struct size) are handled at runtime via
+      OperatingSystem.IsWindows() in Native/Utf32Marshal.cs and Native/PropVariant.cs;
+      there is no need for (and no benefit to) separate per-platform assemblies.
+
+      net8.0 (the currently-supported LTS release) is kept alongside net10.0 so that
+      consumers who haven't upgraded to .NET 9/10 yet can still reference this package
+      directly; both target frameworks share identical source with no #if branches —
+      the source-generated P/Invoke (LibraryImport) and ComWrappers APIs this library
+      relies on have been available since .NET 7, with no behavioral difference between
+      net8.0 and net10.0 that matters here.
+    -->
+  </PropertyGroup>
+
+  <!-- ==================== NuGet 打包元数据 / NuGet packaging metadata ==================== -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>SevenZipLite.Native</PackageId>
+    <Title>SevenZipLite.Native</Title>
+    <Description>
+      纯 C# 封装（Source-Generated COM + P/Invoke，无第三方依赖）的 7-Zip 读写库，覆盖
+      7z / zip / tar / tar.gz 四种格式（含分卷、7z/zip 密码），跨平台支持 Windows /
+      Linux / Android。内部通过官方未修改的 7-Zip 原生库（LGPL-2.1）完成实际编解码，
+      详见 THIRD-PARTY-NOTICES.md。
+
+      A pure C# wrapper (source-generated COM + P/Invoke, no third-party managed
+      dependencies) around 7-Zip, supporting 7z / zip / tar / tar.gz (including
+      multi-volume archives and 7z/zip passwords), cross-platform on Windows / Linux /
+      Android. Actual encoding/decoding is performed by the unmodified official 7-Zip
+      native library (LGPL-2.1) — see THIRD-PARTY-NOTICES.md.
+    </Description>
+    <PackageTags>7zip;7z;zip;tar;gzip;archive;compression;decompression;native</PackageTags>
+    <PackageLicenseExpression>LGPL-2.1-or-later</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!--
+      生成 XML 文档文件（打进包里给 IDE 用作 IntelliSense），但不要求每一个 public 成员都写了
+      <summary>（本项目把"正式、系统性的 API 文档"放在 docs/api/ 下用人工撰写的方式维护，
+      比逐个成员补 XML 注释更适合这个体量的公共 API），所以关闭 CS1591 警告。
+
+      Generate the XML documentation file (bundled for IDE IntelliSense), but don't
+      require every public member to carry a <summary> (this project maintains its
+      authoritative, narrative API documentation by hand under docs/api/, which suits
+      a public surface this small better than chasing CS1591 on every member) — so
+      the CS1591 warning is suppressed.
+    -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <!--
+    把仓库根 native-libs/ 下的原生库按标准 NuGet "runtimes/{rid}/native/{file}" 约定打进包里
+    ——这是让 `dotnet publish -r <rid>` / self-contained 发布自动拿到正确原生库的标准做法。
+    Condition="Exists(...)" 是因为不是每次打包时 8 个 RID 的二进制都齐全（见
+    native-libs/README.md 的"已知缺口"）；缺失的 RID 会被跳过，不会导致打包失败。
+
+    Package the native binaries from the repo-root native-libs/ folder using the
+    standard NuGet "runtimes/{rid}/native/{file}" convention — this is what makes
+    `dotnet publish -r <rid>` / self-contained publish automatically pick up the right
+    native library. Condition="Exists(...)" guards against a RID's binary being absent
+    at pack time (see the "known gaps" note in native-libs/README.md); missing RIDs are
+    silently skipped rather than failing the pack.
+  -->
+  <ItemGroup>
+    <None Include="..\..\native-libs\win-x64\7zlite.dll" Condition="Exists('..\..\native-libs\win-x64\7zlite.dll')" Pack="true" PackagePath="runtimes\win-x64\native\7zlite.dll" />
+    <None Include="..\..\native-libs\win-x86\7zlite.dll" Condition="Exists('..\..\native-libs\win-x86\7zlite.dll')" Pack="true" PackagePath="runtimes\win-x86\native\7zlite.dll" />
+    <None Include="..\..\native-libs\win-arm64\7zlite.dll" Condition="Exists('..\..\native-libs\win-arm64\7zlite.dll')" Pack="true" PackagePath="runtimes\win-arm64\native\7zlite.dll" />
+    <None Include="..\..\native-libs\linux-x64\lib7zlite.so" Condition="Exists('..\..\native-libs\linux-x64\lib7zlite.so')" Pack="true" PackagePath="runtimes\linux-x64\native\lib7zlite.so" />
+    <None Include="..\..\native-libs\android-arm64\lib7zlite.so" Condition="Exists('..\..\native-libs\android-arm64\lib7zlite.so')" Pack="true" PackagePath="runtimes\android-arm64\native\lib7zlite.so" />
+    <None Include="..\..\native-libs\android-arm\lib7zlite.so" Condition="Exists('..\..\native-libs\android-arm\lib7zlite.so')" Pack="true" PackagePath="runtimes\android-arm\native\lib7zlite.so" />
+    <None Include="..\..\native-libs\android-x64\lib7zlite.so" Condition="Exists('..\..\native-libs\android-x64\lib7zlite.so')" Pack="true" PackagePath="runtimes\android-x64\native\lib7zlite.so" />
+    <None Include="..\..\native-libs\android-x86\lib7zlite.so" Condition="Exists('..\..\native-libs\android-x86\lib7zlite.so')" Pack="true" PackagePath="runtimes\android-x86\native\lib7zlite.so" />
+  </ItemGroup>
+
+  <!--
+    `runtimes/{rid}/native/` 只在消费方项目**声明了 RuntimeIdentifier**（或做 self-contained /
+    单文件发布）时才会被自动拷贝到输出目录——这是 NuGet/.NET SDK 的既有限制，不是本包特有问题。
+    为了让"没有指定 RID 的普通 `dotnet run`/`dotnet build`"也能直接可用（本仓库自己的
+    WPF/Linux 控制台 Demo 就是这种典型场景），额外提供 build/ 与 buildTransitive/ 下的
+    .targets 文件，按当前编译所在的操作系统/架构把对应原生库复制到输出目录——见那两个文件的注释。
+
+    `runtimes/{rid}/native/` assets are only auto-copied to the output directory when the
+    consuming project declares a RuntimeIdentifier (or publishes self-contained / as a
+    single file) — this is an inherent NuGet/.NET SDK limitation, not specific to this
+    package. To make plain, non-RID `dotnet run`/`dotnet build` work out of the box too
+    (this is exactly how this repo's own WPF/Linux-console demos are set up), this package
+    additionally ships .targets files under build/ and buildTransitive/ that copy the
+    matching native library to the output directory based on the current build machine's
+    OS/architecture — see the comments in those files.
+  -->
+  <!--
+    注意：这两个 .targets 文件的\"源码\"分别放在 msbuild-targets/ 和 buildTransitive/ 下，
+    但打包目的地（PackagePath）必须是 NuGet 规定的固定约定路径 build/ 和 buildTransitive/
+    ——两者是独立的，PackagePath 才是 NuGet 认的路径，源码所在文件夹名字随意。
+    （历史注记：此前源码文件夹曾直接叫 build/，在某些沙箱/CI 环境里，字面量叫 "build" 的
+    目录会被一些通用的构建产物清理规则误当作生成物清除，因此改用 msbuild-targets/ 这个
+    不会被误判的名字存放源码，仅在打包时通过 PackagePath 映射回 NuGet 要求的 build/。）
+
+    Note: the "source" for these two .targets files lives under msbuild-targets/ and
+    buildTransitive/ respectively, but the packed destination (PackagePath) must be
+    NuGet's fixed convention paths build/ and buildTransitive/ — these are independent;
+    NuGet only cares about PackagePath, the source folder name can be anything.
+    (History: the source folder used to be literally named build/, but some sandboxes/CI
+    environments have generic build-artifact-cleanup rules that mistake a folder literally
+    named "build" for generated output and prune it. Renamed the source folder to
+    msbuild-targets/ to avoid that, remapping back to NuGet's required build/ only at
+    pack time via PackagePath.)
+  -->
+  <ItemGroup>
+    <None Include="msbuild-targets\SevenZipLite.Native.targets" Pack="true" PackagePath="build\SevenZipLite.Native.targets" />
+    <None Include="buildTransitive\SevenZipLite.Native.targets" Pack="true" PackagePath="buildTransitive\SevenZipLite.Native.targets" />
+  </ItemGroup>
+
+</Project>

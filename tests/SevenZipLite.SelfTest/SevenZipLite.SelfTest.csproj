@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SevenZipLite.SelfTest</RootNamespace>
+    <!--
+      纯逻辑、无平台相关代码（只用 System.IO 读写文件），因此可以被
+      SevenZipLite.Tests（Linux 控制台）和 SevenZipLite.MauiDemo（Android App）
+      同时引用，两边跑的是完全相同的往返测试用例，不需要各自维护一份。
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SevenZipLite\SevenZipLite.csproj" />
+  </ItemGroup>
+
+</Project>

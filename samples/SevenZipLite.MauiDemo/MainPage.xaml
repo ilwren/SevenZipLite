@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="SevenZipLite.MauiDemo.MainPage"
+             Title="SevenZipLite Android 可行性验证">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="20" Spacing="16">
+
+            <Label Text="SevenZipLite · .NET MAUI 演示"
+                   FontSize="22" FontAttributes="Bold" />
+            <Label FontSize="13" TextColor="Gray"
+                   Text="裁剪版 7-Zip 原生库（纯 C/C++，静态链接进 lib7zlite.so）+ 纯 C# Source-Generated COM/P-Invoke 封装，仅覆盖 7z / zip / tar / tar.gz（含分卷、7z/zip 密码），不引入任何 Java/JNI 桥接。本页面用于在真实 Android 运行时上验证该方案的可行性。" />
+
+            <BoxView HeightRequest="1" Color="LightGray" />
+
+            <!-- 第一部分：内置自检（11 组往返用例，与 Linux 控制台版共用同一份测试逻辑） -->
+            <Label Text="1. 内置自检（11 组格式 × 分卷 × 密码 往返测试）" FontSize="16" FontAttributes="Bold" />
+            <Button x:Name="SelfTestButton" Text="运行自检" Clicked="OnRunSelfTestClicked" />
+            <ActivityIndicator x:Name="SelfTestSpinner" IsRunning="False" IsVisible="False" />
+            <Label x:Name="SelfTestSummaryLabel" FontAttributes="Bold" />
+            <Editor x:Name="SelfTestLogEditor"
+                    IsReadOnly="True"
+                    AutoSize="TextChanges"
+                    MinimumHeightRequest="120"
+                    FontFamily="Courier"
+                    FontSize="11" />
+
+            <BoxView HeightRequest="1" Color="LightGray" />
+
+            <!-- 第二部分：手动体验——挑真实文件，现场打包/解压，眼见为实 -->
+            <Label Text="2. 手动体验：选文件 → 打包 → 解压校验" FontSize="16" FontAttributes="Bold" />
+
+            <Label Text="目标格式：" />
+            <Picker x:Name="FormatPicker" Title="选择格式">
+                <Picker.ItemsSource>
+                    <x:Array Type="{x:Type x:String}">
+                        <x:String>7z</x:String>
+                        <x:String>zip</x:String>
+                        <x:String>tar</x:String>
+                        <x:String>tar.gz</x:String>
+                    </x:Array>
+                </Picker.ItemsSource>
+            </Picker>
+
+            <Label Text="密码（留空表示不加密；tar/tar.gz 不支持密码，会被忽略）：" />
+            <Entry x:Name="PasswordEntry" Placeholder="可选" />
+
+            <Label Text="分卷大小（字节，0 表示不分卷）：" />
+            <Entry x:Name="VolumeSizeEntry" Placeholder="0" Keyboard="Numeric" Text="0" />
+
+            <Button x:Name="PickFilesButton" Text="1) 选择要打包的文件" Clicked="OnPickFilesClicked" />
+            <Label x:Name="PickedFilesLabel" FontSize="12" TextColor="Gray" />
+
+            <Button x:Name="PackButton" Text="2) 打包" Clicked="OnPackClicked" IsEnabled="False" />
+            <Button x:Name="ExtractButton" Text="3) 解压刚生成的归档并校验" Clicked="OnExtractClicked" IsEnabled="False" />
+
+            <Label x:Name="ManualLogLabel" FontFamily="Courier" FontSize="11" />
+
+            <BoxView HeightRequest="1" Color="LightGray" />
+
+            <!-- 第三部分：大文件吞吐量测试 -->
+            <Label Text="3. 大文件吞吐量测试（合成数据，观察压缩/解压速度）" FontSize="16" FontAttributes="Bold" />
+            <Label FontSize="12" TextColor="Gray"
+                   Text="在 App 缓存目录生成一个体积可指定的合成大文件——按 4MB 块交替混合高度可压缩的重复文本片段与不可压缩的随机噪声，模拟真实世界中等压缩比的大文件——然后分别计时压缩与解压，并用 SHA-256 校验一致性。手机存储/算力有限，建议先从 64~128MB 试起，确认没问题再逐步加大到最多约 1024MB。测试完成后会自动清理生成的文件。" />
+
+            <Label Text="大小（MB，手机建议 64~256，最多约 1024）：" />
+            <Entry x:Name="PerfSizeEntry" Placeholder="128" Keyboard="Numeric" Text="128" />
+
+            <Label Text="格式：" />
+            <Picker x:Name="PerfFormatPicker" Title="选择格式">
+                <Picker.ItemsSource>
+                    <x:Array Type="{x:Type x:String}">
+                        <x:String>7z</x:String>
+                        <x:String>zip</x:String>
+                        <x:String>tar</x:String>
+                        <x:String>tar.gz</x:String>
+                    </x:Array>
+                </Picker.ItemsSource>
+            </Picker>
+
+            <Button x:Name="PerfTestButton" Text="运行性能测试" Clicked="OnRunPerfTestClicked" />
+            <ActivityIndicator x:Name="PerfTestSpinner" IsRunning="False" IsVisible="False" />
+            <Label x:Name="PerfTestSummaryLabel" FontAttributes="Bold" />
+            <Editor x:Name="PerfTestLogEditor"
+                    IsReadOnly="True"
+                    AutoSize="TextChanges"
+                    MinimumHeightRequest="120"
+                    FontFamily="Courier"
+                    FontSize="11" />
+
+            <BoxView HeightRequest="1" Color="LightGray" />
+
+            <!-- 第四部分：多线程压力测试 -->
+            <Label Text="4. 多线程压力测试（多轮往返，排查并发相关的偶发问题）" FontSize="16" FontAttributes="Bold" />
+            <Label FontSize="12" TextColor="Gray"
+                   Text="反复创建一个包含若干个中小文件的归档、解压、逐文件 SHA-256 校验，用来验证多线程压缩路径（mt&gt;1）在较多文件/较多轮次下是否稳定。这是独立于上面“内置自检”之外的可选诊断项，不属于正确性自检的一部分。" />
+
+            <Label Text="每轮文件数：" />
+            <Entry x:Name="StressFileCountEntry" Placeholder="20" Keyboard="Numeric" Text="20" />
+
+            <Label Text="轮数：" />
+            <Entry x:Name="StressIterationsEntry" Placeholder="15" Keyboard="Numeric" Text="15" />
+
+            <Label Text="格式：" />
+            <Picker x:Name="StressFormatPicker" Title="选择格式">
+                <Picker.ItemsSource>
+                    <x:Array Type="{x:Type x:String}">
+                        <x:String>7z</x:String>
+                        <x:String>zip</x:String>
+                        <x:String>tar</x:String>
+                    </x:Array>
+                </Picker.ItemsSource>
+            </Picker>
+
+            <Button x:Name="StressTestButton" Text="运行压力测试" Clicked="OnRunStressTestClicked" />
+            <ActivityIndicator x:Name="StressTestSpinner" IsRunning="False" IsVisible="False" />
+            <Label x:Name="StressTestSummaryLabel" FontAttributes="Bold" />
+            <Editor x:Name="StressTestLogEditor"
+                    IsReadOnly="True"
+                    AutoSize="TextChanges"
+                    MinimumHeightRequest="120"
+                    FontFamily="Courier"
+                    FontSize="11" />
+
+        </VerticalStackLayout>
+    </ScrollView>
+
+</ContentPage>

@@ -1,0 +1,24 @@
+<Project>
+  <!--
+    这个文件转发到 build/SevenZipLite.Native.targets（内容/逻辑见那份文件的注释）。
+    分成 build/ 和 buildTransitive/ 两份是 NuGet 的标准约定：
+    build/{PackageId}.targets 只对"直接引用本包"的项目生效；
+    buildTransitive/{PackageId}.targets 对"通过 ProjectReference 间接依赖本包"的项目
+    也生效（现代 SDK 风格项目的 PackageReference 默认按传递方式解析）。
+    本仓库自己的 SevenZipLite.SelfTest/Tests/WpfDemo/MauiDemo 就是通过
+    ProjectReference 依赖 src/SevenZipLite 的典型场景，需要 buildTransitive 才能让
+    "最终跑起来的那个可执行项目"也拿到原生库。
+
+    This file forwards to build/SevenZipLite.Native.targets (see that file's comments
+    for the actual logic). Splitting into build/ and buildTransitive/ is the standard
+    NuGet convention: build/{PackageId}.targets only applies to projects that
+    directly reference this package; buildTransitive/{PackageId}.targets also applies
+    to projects that depend on it transitively via ProjectReference (which is how
+    PackageReference resolves by default in modern SDK-style projects). This repo's
+    own SevenZipLite.SelfTest/Tests/WpfDemo/MauiDemo projects depend on
+    src/SevenZipLite via ProjectReference, which is exactly the scenario that needs
+    buildTransitive for the final runnable executable project to receive the native
+    library too.
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)..\build\SevenZipLite.Native.targets" />
+</Project>
