@@ -200,26 +200,57 @@ jobs:
   #    只有仓库 Secrets 中配置了 NUGET_API_KEY 才会运行；用户当前未要求启用此步骤。
   #    Only runs if NUGET_API_KEY is configured in repo Secrets; not requested to be
   #    enabled right now by the maintainer.
+  #
+  #    注意：job 级（以及 step 级）的 `if:` 条件不允许直接引用 `secrets` 上下文
+  #    （GitHub Actions 会在工作流校验阶段报错 "Unrecognized named-value: 'secrets'"，
+  #    导致整个工作流文件判定为不合法，一个 job 都跑不起来）。`secrets` 只能出现在
+  #    `env:`/`with:` 里。因此这里改用：job 本身总是被调度，但第一步先把 secret 读进
+  #    普通 env 变量、判断是否为空并写入 step output，后续步骤的 `if:` 只依赖这个
+  #    step output（不是 `secrets` 上下文），从而绕开这个限制。
+  #
+  #    Note: job-level (and step-level) `if:` conditions cannot directly reference the
+  #    `secrets` context (GitHub Actions rejects it at workflow-validation time with
+  #    "Unrecognized named-value: 'secrets'", which fails the *entire* workflow file
+  #    before any job runs). `secrets` may only appear inside `env:`/`with:`. So this
+  #    job always gets scheduled, but its first step reads the secret into a plain env
+  #    var, checks whether it's empty, and writes a step output; subsequent steps'
+  #    `if:` conditions only depend on that step output (not the `secrets` context),
+  #    sidestepping the restriction.
   # ---------------------------------------------------------------------
   publish-nuget-org:
     runs-on: ubuntu-latest
     needs: [pack-nuget, create-release]
-    if: ${{ secrets.NUGET_API_KEY != '' }}
-    env:
-      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
     steps:
+      - name: Check whether NUGET_API_KEY is configured
+        id: check
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -n "$NUGET_API_KEY" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "NUGET_API_KEY secret 未配置，跳过 nuget.org 推送 / NUGET_API_KEY secret not set, skipping nuget.org push"
+          fi
+
       - uses: actions/download-artifact@v4
+        if: steps.check.outputs.has_key == 'true'
         with:
           name: nuget-package
           path: artifacts
 
       - uses: actions/setup-dotnet@v4
+        if: steps.check.outputs.has_key == 'true'
         with:
           dotnet-version: "10.0.x"
 
       - name: Push to nuget.org
+        if: steps.check.outputs.has_key == 'true'
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
           dotnet nuget push "artifacts/*.nupkg" \
             --api-key "$NUGET_API_KEY" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
+
