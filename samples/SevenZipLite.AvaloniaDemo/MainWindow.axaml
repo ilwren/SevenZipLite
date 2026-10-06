@@ -1,14 +1,14 @@
-<Window x:Class="SevenZipLite.WpfDemo.MainWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="SevenZipLite WPF 演示 (win-x64 / win-x86)"
-        Height="760" Width="920" MinHeight="600" MinWidth="700">
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        x:Class="SevenZipLite.AvaloniaDemo.MainWindow"
+        Title="SevenZipLite Avalonia 演示 (win-x64 / win-x86 / linux-x64, Native AOT)"
+        Height="800" Width="920" MinHeight="600" MinWidth="700">
+    <ScrollViewer>
         <StackPanel Margin="16">
 
-            <TextBlock x:Name="HeaderLabel" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"
+            <TextBlock Name="HeaderLabel" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"
                        TextWrapping="Wrap" />
-            <TextBlock Text="本项目专门用于在真实 Windows 环境里验证裁剪版 7-Zip 原生库（7zlite.dll）+ 纯 C# P/Invoke 封装（SevenZipLite 类库）在 win-x64 / win-x86 两个 RID 上是否可用，覆盖 7z / zip / tar / tar.gz 四种格式及其分卷、7z/zip 密码。"
+            <TextBlock Text="本项目用于验证裁剪版 7-Zip 原生库（7zlite.dll / lib7zlite.so）+ 纯 C# P/Invoke 封装（SevenZipLite 类库）在 win-x64 / win-x86 / linux-x64 上以 Native AOT 方式发布后是否可用，覆盖 7z / zip / tar / tar.gz 四种格式及其分卷、7z/zip 密码。与之前的 WPF 版本相比，本 Demo 换成了跨平台的 Avalonia UI 框架，并以 Native AOT（PublishAot=true）方式发布——不依赖 .NET 运行时的原生可执行文件。"
                        TextWrapping="Wrap" Foreground="Gray" Margin="0,0,0,16" />
 
             <!-- ===================== 区块一：内置往返自检 ===================== -->
@@ -17,13 +17,12 @@
                     <TextBlock TextWrapping="Wrap" Foreground="Gray" Margin="0,0,0,8"
                                Text="自动生成测试文件 -&gt; 打包 -&gt; 列出条目 -&gt; 解压 -&gt; 逐字节比对，覆盖 7z/zip/tar/tar.gz × 是否分卷 × 是否密码 共 11 个用例（SevenZipLite.SelfTest 项目，与 SevenZipLite.Tests / SevenZipLite.MauiDemo 完全共享同一份代码）。" />
                     <DockPanel Margin="0,0,0,8">
-                        <Button x:Name="SelfTestButton" Content="运行自检" Width="120" Height="30"
+                        <Button Name="SelfTestButton" Content="运行自检" Width="120" Height="30"
                                 Click="OnRunSelfTestClicked" DockPanel.Dock="Left" />
-                        <TextBlock x:Name="SelfTestSummaryLabel" Margin="12,0,0,0" VerticalAlignment="Center"
+                        <TextBlock Name="SelfTestSummaryLabel" Margin="12,0,0,0" VerticalAlignment="Center"
                                    TextWrapping="Wrap" />
                     </DockPanel>
-                    <TextBox x:Name="SelfTestLogBox" Height="220" IsReadOnly="True"
-                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                    <TextBox Name="SelfTestLogBox" Height="220" IsReadOnly="True"
                              TextWrapping="NoWrap" FontFamily="Consolas" AcceptsReturn="True" />
                 </StackPanel>
             </GroupBox>
@@ -32,9 +31,9 @@
             <GroupBox Header="2. 手动压缩 / 解压体验（真实选择磁盘文件，非合成测试数据）" Padding="10">
                 <StackPanel>
                     <DockPanel Margin="0,0,0,8">
-                        <Button x:Name="PickFilesButton" Content="选择文件…" Width="120" Height="28"
+                        <Button Name="PickFilesButton" Content="选择文件…" Width="120" Height="28"
                                 Click="OnPickFilesClicked" DockPanel.Dock="Left" />
-                        <TextBlock x:Name="PickedFilesLabel" Margin="12,0,0,0" VerticalAlignment="Center"
+                        <TextBlock Name="PickedFilesLabel" Margin="12,0,0,0" VerticalAlignment="Center"
                                    TextWrapping="Wrap" Text="尚未选择文件" />
                     </DockPanel>
 
@@ -51,7 +50,7 @@
                         </Grid.ColumnDefinitions>
 
                         <TextBlock Grid.Column="0" Text="格式:" VerticalAlignment="Center" Margin="0,0,4,0" />
-                        <ComboBox x:Name="FormatCombo" Grid.Column="1" SelectedIndex="0">
+                        <ComboBox Name="FormatCombo" Grid.Column="1" SelectedIndex="0">
                             <ComboBoxItem Content="7z" />
                             <ComboBoxItem Content="zip" />
                             <ComboBoxItem Content="tar" />
@@ -59,21 +58,27 @@
                         </ComboBox>
 
                         <TextBlock Grid.Column="3" Text="密码(可空, 仅 7z/zip 生效):" VerticalAlignment="Center" Margin="0,0,4,0" />
-                        <PasswordBox x:Name="PasswordBox" Grid.Column="4" />
+                        <!--
+                          Avalonia 没有独立的 PasswordBox 控件，用 TextBox + PasswordChar 实现同等效果
+                          （见 MainWindow.axaml.cs 里用 .Text 替代 WPF PasswordBox 的 .Password 属性）。
+                          Avalonia has no dedicated PasswordBox control; a TextBox with PasswordChar set
+                          achieves the same effect (see MainWindow.axaml.cs using .Text in place of WPF
+                          PasswordBox's .Password property).
+                        -->
+                        <TextBox Name="PasswordBox" Grid.Column="4" PasswordChar="•" />
 
                         <TextBlock Grid.Column="6" Text="分卷大小(字节, 0=不分卷):" VerticalAlignment="Center" Margin="0,0,4,0" />
-                        <TextBox x:Name="VolumeSizeBox" Grid.Column="7" Text="0" />
+                        <TextBox Name="VolumeSizeBox" Grid.Column="7" Text="0" />
                     </Grid>
 
                     <DockPanel Margin="0,0,0,8">
-                        <Button x:Name="PackButton" Content="压缩" Width="120" Height="28" IsEnabled="False"
+                        <Button Name="PackButton" Content="压缩" Width="120" Height="28" IsEnabled="False"
                                 Click="OnPackClicked" DockPanel.Dock="Left" Margin="0,0,8,0" />
-                        <Button x:Name="ExtractButton" Content="解压 + 校验" Width="140" Height="28" IsEnabled="False"
+                        <Button Name="ExtractButton" Content="解压 + 校验" Width="140" Height="28" IsEnabled="False"
                                 Click="OnExtractClicked" DockPanel.Dock="Left" />
                     </DockPanel>
 
-                    <TextBox x:Name="ManualLogBox" Height="200" IsReadOnly="True"
-                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                    <TextBox Name="ManualLogBox" Height="200" IsReadOnly="True"
                              TextWrapping="NoWrap" FontFamily="Consolas" AcceptsReturn="True" />
                 </StackPanel>
             </GroupBox>
@@ -92,9 +97,9 @@
                             <ColumnDefinition Width="120" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="大小(MB, 建议≤1024):" VerticalAlignment="Center" Margin="0,0,4,0" />
-                        <TextBox x:Name="PerfSizeBox" Grid.Column="1" Text="512" />
+                        <TextBox Name="PerfSizeBox" Grid.Column="1" Text="512" />
                         <TextBlock Grid.Column="3" Text="格式:" VerticalAlignment="Center" Margin="0,0,4,0" />
-                        <ComboBox x:Name="PerfFormatCombo" Grid.Column="4" SelectedIndex="0">
+                        <ComboBox Name="PerfFormatCombo" Grid.Column="4" SelectedIndex="0">
                             <ComboBoxItem Content="7z" />
                             <ComboBoxItem Content="zip" />
                             <ComboBoxItem Content="tar" />
@@ -102,13 +107,12 @@
                         </ComboBox>
                     </Grid>
                     <DockPanel Margin="0,0,0,8">
-                        <Button x:Name="PerfTestButton" Content="运行性能测试" Width="120" Height="30"
+                        <Button Name="PerfTestButton" Content="运行性能测试" Width="120" Height="30"
                                 Click="OnRunPerfTestClicked" DockPanel.Dock="Left" />
-                        <TextBlock x:Name="PerfTestSummaryLabel" Margin="12,0,0,0" VerticalAlignment="Center"
+                        <TextBlock Name="PerfTestSummaryLabel" Margin="12,0,0,0" VerticalAlignment="Center"
                                    TextWrapping="Wrap" />
                     </DockPanel>
-                    <TextBox x:Name="PerfTestLogBox" Height="180" IsReadOnly="True"
-                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                    <TextBox Name="PerfTestLogBox" Height="180" IsReadOnly="True"
                              TextWrapping="NoWrap" FontFamily="Consolas" AcceptsReturn="True" />
                 </StackPanel>
             </GroupBox>
@@ -130,24 +134,23 @@
                             <ColumnDefinition Width="120" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="每轮文件数:" VerticalAlignment="Center" Margin="0,0,4,0" />
-                        <TextBox x:Name="StressFileCountBox" Grid.Column="1" Text="20" />
+                        <TextBox Name="StressFileCountBox" Grid.Column="1" Text="20" />
                         <TextBlock Grid.Column="3" Text="轮数:" VerticalAlignment="Center" Margin="0,0,4,0" />
-                        <TextBox x:Name="StressIterationsBox" Grid.Column="4" Text="15" />
+                        <TextBox Name="StressIterationsBox" Grid.Column="4" Text="15" />
                         <TextBlock Grid.Column="6" Text="格式:" VerticalAlignment="Center" Margin="0,0,4,0" />
-                        <ComboBox x:Name="StressFormatCombo" Grid.Column="7" SelectedIndex="0">
+                        <ComboBox Name="StressFormatCombo" Grid.Column="7" SelectedIndex="0">
                             <ComboBoxItem Content="7z" />
                             <ComboBoxItem Content="zip" />
                             <ComboBoxItem Content="tar" />
                         </ComboBox>
                     </Grid>
                     <DockPanel Margin="0,0,0,8">
-                        <Button x:Name="StressTestButton" Content="运行压力测试" Width="120" Height="30"
+                        <Button Name="StressTestButton" Content="运行压力测试" Width="120" Height="30"
                                 Click="OnRunStressTestClicked" DockPanel.Dock="Left" />
-                        <TextBlock x:Name="StressTestSummaryLabel" Margin="12,0,0,0" VerticalAlignment="Center"
+                        <TextBlock Name="StressTestSummaryLabel" Margin="12,0,0,0" VerticalAlignment="Center"
                                    TextWrapping="Wrap" />
                     </DockPanel>
-                    <TextBox x:Name="StressTestLogBox" Height="180" IsReadOnly="True"
-                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                    <TextBox Name="StressTestLogBox" Height="180" IsReadOnly="True"
                              TextWrapping="NoWrap" FontFamily="Consolas" AcceptsReturn="True" />
                 </StackPanel>
             </GroupBox>

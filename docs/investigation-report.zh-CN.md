@@ -548,6 +548,14 @@ Android 的默认 Mono 运行时，则完全不可行**，这一前提在报告�
   成功、`objdump` 核查导入表/导出表），但 `SevenZipLite.WpfDemo` 尚未在真实 Windows
   机器上做端到端运行验证，需要用户补上这最后一步。
 
+**（后续更新：`SevenZipLite.WpfDemo` 已在之后的一轮改动中被整体删除，替换为跨平台的
+`SevenZipLite.AvaloniaDemo`——功能上与本节描述的 WPF Demo 完全对等（同样覆盖
+win-x64/win-x86，并新增 linux-x64），但改用 Avalonia UI 框架，以 Native AOT
+（`PublishAot=true`）方式发布为不依赖 .NET 运行时的原生可执行文件；三个 RID 均已在沙箱内
+完成真实构建产物的运行验证（linux-x64 额外做了无头 X server 下的真实点击 GUI 验证）。本节
+关于 WPF/MinGW 构建踩坑过程的记录本身仍然真实有效，不受此更新影响，只是"现在用哪个 Demo
+项目覆盖 Windows 桌面场景"这一事实需要以此条为准。）**
+
 ---
 
 ## 九、主要信息来源

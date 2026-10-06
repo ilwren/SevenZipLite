@@ -1,4 +1,4 @@
-﻿<Project>
+<Project>
 
   <!--
     全仓库共享的项目元数据。只有 src/SevenZipLite（打包成 NuGet 包的那个项目）会真正
@@ -11,13 +11,18 @@
     copyright/author info for consistency.
   -->
   <PropertyGroup>
-    <Authors>ilwren</Authors>
-    <Company>ilwren</Company>
+    <Authors>SevenZipLite Contributors</Authors>
+    <Company>SevenZipLite Contributors</Company>
     <Product>SevenZipLite</Product>
-    <Copyright>Copyright (c) 2026 ilwren</Copyright>
+    <Copyright>Copyright (c) 2026 SevenZipLite Contributors</Copyright>
 
-    <RepositoryUrl>https://github.com/ilwren/SevenZipLite</RepositoryUrl>
-    <PackageProjectUrl>https://github.com/ilwren/SevenZipLite</PackageProjectUrl>
+    <!--
+      TODO: 替换成真实仓库地址后删除这条 TODO。在此之前 CI 产出的包/文档里这个地址都是占位符。
+      TODO: replace with the real repository URL, then delete this TODO. Until then, every
+      package/doc produced by CI will contain this placeholder URL.
+    -->
+    <RepositoryUrl>https://github.com/your-org/SevenZipLite</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/your-org/SevenZipLite</PackageProjectUrl>
     <RepositoryType>git</RepositoryType>
 
     <!--

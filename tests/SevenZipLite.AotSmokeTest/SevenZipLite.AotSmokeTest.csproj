@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    这不是普通的单元测试项目，是专门用来"把 Native AOT 兼容性验证固化成可重复 CI 用例"
+    的探针项目——SevenZipLite.csproj 打开了 <IsAotCompatible>，但那只是编译期静态分析，
+    不保证运行时真的正确（比如 COM vtable 布局、P/Invoke 字符串编组这些问题，trimmer/
+    AOT 分析器是看不出来的，只有真的在 Native AOT 产物里跑一遍才能发现）。所以本项目
+    OutputType 是 Exe，Program.cs 里跑的是一个完整的"创建带密码 zip -> 列出条目 ->
+    解压 -> 校验内容"端到端流程，而不是断言式的单元测试——任何一步失败/编组错位都会
+    直接体现为异常或内容不匹配，进程以非 0 退出码结束。
+
+    This is not an ordinary unit-test project — it's a dedicated probe that turns the
+    "Native AOT compatibility is actually verified" claim into a repeatable CI case.
+    SevenZipLite.csproj's <IsAotCompatible> flag is only a compile-time static-analysis
+    opt-in; it does NOT guarantee runtime correctness (things like COM vtable layout or
+    P/Invoke string marshalling bugs are invisible to the trimmer/AOT analyzer and only
+    surface by actually running the Native AOT output). So this project's OutputType is
+    Exe, and Program.cs runs a full end-to-end flow (create a password-protected zip ->
+    list entries -> extract -> verify content) rather than assertion-style unit tests —
+    any failure or marshalling corruption along the way shows up as an exception or a
+    content mismatch, and the process exits non-zero.
+
+    只以 net8.0 为目标框架（库支持的最低 TFM），而不是也测 net10.0：两个 TFM 共享完全
+    相同的源码、完全相同的 LibraryImport/GeneratedComInterface 生成结果，没有 #if 分支
+    （见 SevenZipLite.csproj 顶部注释），net8.0 上跑通代表 net10.0 同样跑得通，没必要
+    在 CI 里重复发布两次增加耗时。
+
+    Only targets net8.0 (the library's lowest supported TFM), not also net10.0: both
+    TFMs share identical source and identical LibraryImport/GeneratedComInterface
+    generator output, with no #if branches (see the comment atop SevenZipLite.csproj) —
+    passing on net8.0 implies net10.0 passes too, so there's no need to publish twice in
+    CI just to burn extra time.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SevenZipLite.AotSmokeTest</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SevenZipLite\SevenZipLite.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      linux-x64 原生库的唯一来源是仓库根目录的 native-libs/（见该目录下的 README.md），
+      本项目只是 Link 引用，不再保留自己的拷贝（与 tests/SevenZipLite.Tests 的做法一致）。
+
+      Single source of truth for the linux-x64 native binary is the repo-root
+      native-libs/ folder (see its README.md); this project just links to it (same
+      approach as tests/SevenZipLite.Tests).
+    -->
+    <None Include="..\..\native-libs\linux-x64\lib7zlite.so" Link="lib7zlite.so" Condition="Exists('..\..\native-libs\linux-x64\lib7zlite.so')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

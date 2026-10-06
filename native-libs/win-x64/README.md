@@ -42,7 +42,7 @@ Extra 包里的 `7z.dll` 是给 32/64 位混合、面向命令行 `7za.exe`/`7zr
 - 导出表里包含 `CreateObject`、`GetHandlerProperty`、`GetHandlerProperty2`
   （`dumpbin /exports 7zlite.dll` 或 `objdump -p 7zlite.dll` 均可查看）。
 
-`SevenZipLite.WpfDemo.csproj` 会在检测到这个文件存在时才把它复制进输出目录；没有这个文件时
+`SevenZipLite.AvaloniaDemo.csproj` 会在检测到这个文件存在时才把它复制进输出目录；没有这个文件时
 项目仍可以正常打开/编译，只是运行时调用原生方法会抛 `DllNotFoundException`。
 
 仓库本身**不提交**这个二进制文件（版权归 Igor Pavlov / 7-Zip 项目所有，属于第三方官方发布物，

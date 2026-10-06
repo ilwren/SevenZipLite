@@ -6,8 +6,9 @@ name: Release
 #
 # 产物 / Artifacts published to the GitHub Release:
 #   - SevenZipLite.Native.<version>.nupkg / .snupkg  (NuGet 包 / NuGet package)
-#   - SevenZipLite.WpfDemo-win-x64.zip
-#   - SevenZipLite.WpfDemo-win-x86.zip
+#   - SevenZipLite.AvaloniaDemo-win-x64.zip   (Native AOT，单文件原生可执行文件)
+#   - SevenZipLite.AvaloniaDemo-win-x86.zip   (Native AOT, single-file native executable)
+#   - SevenZipLite.AvaloniaDemo-linux-x64.zip (Native AOT, single-file native executable)
 #   - SevenZipLite.MauiDemo.apk           (未签名 / unsigned)
 #
 # nuget.org 发布 / nuget.org publish:
@@ -69,7 +70,46 @@ jobs:
         run: dotnet run --project tests/SevenZipLite.Tests -c Release -- --stress
 
   # ---------------------------------------------------------------------
-  # 3. 打包 NuGet 包 / Pack the NuGet package.
+  # 3. Native AOT 兼容性冒烟测试：把 tests/SevenZipLite.AotSmokeTest 发布成真正的
+  #    Native AOT 原生可执行文件后再实际运行一遍，验证 COM 互操作 / P-Invoke 字符串
+  #    编组在 Native AOT 运行时下也是正确的——src/SevenZipLite/SevenZipLite.csproj 里的
+  #    <IsAotCompatible> 只是编译期静态分析（trim/AOT analyzer 0 警告），不能代替这一步
+  #    真正把原生产物跑起来的运行时验证（vtable 布局错位这类问题，静态分析是看不出来的）。
+  #    不依赖任何上游 job 的产物，只需要 setup 解析出的版本号上下文，因此和 test-linux
+  #    并行执行，不拖慢整体发布流程。
+  #
+  #    Native AOT compatibility smoke test: publish tests/SevenZipLite.AotSmokeTest as a
+  #    real Native AOT executable and actually run it, to verify COM interop / P-Invoke
+  #    string marshalling are also correct under the Native AOT runtime —
+  #    src/SevenZipLite/SevenZipLite.csproj's <IsAotCompatible> is only a compile-time
+  #    static-analysis opt-in (0 warnings from the trim/AOT analyzer) and can't replace
+  #    this runtime check against the actual native output (things like COM vtable
+  #    layout mismatches are invisible to static analysis). Doesn't depend on any
+  #    upstream job's artifacts, just the version context resolved by setup, so it runs
+  #    in parallel with test-linux without slowing down the overall release.
+  # ---------------------------------------------------------------------
+  verify-aot:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish AOT smoke test (linux-x64)
+        run: >
+          dotnet publish tests/SevenZipLite.AotSmokeTest/SevenZipLite.AotSmokeTest.csproj
+          -c Release -r linux-x64 --self-contained true
+          -p:PublishAot=true
+          -o publish/aot-smoke-test
+
+      - name: Run AOT smoke test
+        run: ./publish/aot-smoke-test/SevenZipLite.AotSmokeTest
+
+  # ---------------------------------------------------------------------
+  # 4. 打包 NuGet 包 / Pack the NuGet package.
   # ---------------------------------------------------------------------
   pack-nuget:
     runs-on: ubuntu-latest
@@ -95,14 +135,37 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------
-  # 4. 发布 WPF Demo（win-x64 / win-x86）/ Publish the WPF demo.
+  # 5. 发布 Avalonia Demo（win-x64 / win-x86 / linux-x64，Native AOT）
+  #    / Publish the Avalonia demo (win-x64 / win-x86 / linux-x64, Native AOT).
   # ---------------------------------------------------------------------
-  publish-wpf:
-    runs-on: windows-latest
+  publish-avalonia:
+    # 每个 RID 配对到它原生对应的 Runner OS，而不是让某个 Runner 去跨平台发布别的 RID
+    # ——Native AOT 的代码生成器（ilc）不支持跨操作系统编译（只能跨架构，比如同为
+    # Windows 的 x64/x86），在 Linux 上发布 win-x64/win-x86、或在 Windows 上发布
+    # linux-x64 都会失败。三个 RID 天然对应两种 Runner OS，matrix 里按 RID 配好对应
+    # 的 os 即可，不需要额外的跨平台处理。
+    #
+    # Each RID is paired with its own native Runner OS rather than having one runner
+    # cross-publish another RID — Native AOT's code generator (ilc) does not support
+    # cross-OS compilation (only cross-architecture on the same OS, e.g. Windows x64/
+    # x86); publishing win-x64/win-x86 on Linux, or linux-x64 on Windows, would fail.
+    # The three RIDs naturally map to two runner OSes, so the matrix just pairs each
+    # RID with its OS — no extra cross-platform handling needed.
+    runs-on: ${{ matrix.os }}
     needs: setup
     strategy:
+      # fail-fast: false —— 三个 RID 互相独立，一个失败不应该连带取消其它正在跑的 job。
+      # fail-fast: false — the three RIDs are independent; one failing shouldn't cancel
+      # the other still-running jobs.
+      fail-fast: false
       matrix:
-        rid: [win-x64, win-x86]
+        include:
+          - rid: win-x64
+            os: windows-latest
+          - rid: win-x86
+            os: windows-latest
+          - rid: linux-x64
+            os: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -110,25 +173,45 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Publish WPF demo (${{ matrix.rid }})
+      # 这个 Avalonia 项目没有声明 <Platforms>/<PlatformTarget>（跟之前 WPF Demo 不
+      # 一样），所以不会重现当年 win-x86 那个 "RuntimeIdentifier platform 'win-x86'
+      # and the PlatformTarget 'x64' must be compatible." 的 NETSDK1032 问题，这里
+      # 不需要再额外传 -p:PlatformTarget=... 兜底。PublishAot=true 已经写死在 csproj
+      # 里（不区分 Configuration），这里仍显式传一遍只是为了让这一步本身自解释。
+      #
+      # This Avalonia project declares no <Platforms>/<PlatformTarget> (unlike the old
+      # WPF demo), so it can't reproduce the old win-x86 NETSDK1032 "RuntimeIdentifier
+      # platform 'win-x86' and the PlatformTarget 'x64' must be compatible." bug — no
+      # extra -p:PlatformTarget=... override is needed here. PublishAot=true is already
+      # hardcoded in the csproj (not conditioned on Configuration); it's still passed
+      # explicitly below purely so this step is self-documenting.
+      - name: Publish Avalonia demo (${{ matrix.rid }}, Native AOT)
         run: >
-          dotnet publish samples/SevenZipLite.WpfDemo/SevenZipLite.WpfDemo.csproj
+          dotnet publish samples/SevenZipLite.AvaloniaDemo/SevenZipLite.AvaloniaDemo.csproj
           -c Release -r ${{ matrix.rid }} --self-contained true
           -p:Version=${{ needs.setup.outputs.version }}
-          -p:PublishSingleFile=false
+          -p:PublishAot=true
           -o publish/${{ matrix.rid }}
 
-      - name: Zip artifact
-        run: Compress-Archive -Path publish/${{ matrix.rid }}/* -DestinationPath SevenZipLite.WpfDemo-${{ matrix.rid }}.zip
+      - name: Zip artifact (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path publish/${{ matrix.rid }}/* -DestinationPath SevenZipLite.AvaloniaDemo-${{ matrix.rid }}.zip
+
+      - name: Zip artifact (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cd publish/${{ matrix.rid }}
+          zip -r "../../SevenZipLite.AvaloniaDemo-${{ matrix.rid }}.zip" .
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wpf-demo-${{ matrix.rid }}
-          path: SevenZipLite.WpfDemo-${{ matrix.rid }}.zip
+          name: avalonia-demo-${{ matrix.rid }}
+          path: SevenZipLite.AvaloniaDemo-${{ matrix.rid }}.zip
           if-no-files-found: error
 
   # ---------------------------------------------------------------------
-  # 5. 构建 MAUI (Android) Demo APK / Build the MAUI (Android) demo APK.
+  # 6. 构建 MAUI (Android) Demo APK / Build the MAUI (Android) demo APK.
   # ---------------------------------------------------------------------
   build-maui:
     runs-on: ubuntu-latest
@@ -165,11 +248,18 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------
-  # 6. 创建 GitHub Release 并附上所有产物 / Create the GitHub Release with all assets.
+  # 7. 创建 GitHub Release 并附上所有产物 / Create the GitHub Release with all assets.
   # ---------------------------------------------------------------------
   create-release:
     runs-on: ubuntu-latest
-    needs: [setup, pack-nuget, publish-wpf, build-maui]
+    # verify-aot 不产出任何制品（没有要下载/打包进 Release 的文件），但它的通过与否
+    # 仍然作为发布质量门槛之一：加进 needs 列表能让它失败时连带阻止 create-release，
+    # 而不是静默跳过检查。
+    # verify-aot produces no artifacts (nothing to download/bundle into the Release),
+    # but whether it passes is still one of the release's quality gates: including it
+    # in needs means its failure blocks create-release too, instead of being silently
+    # ignored.
+    needs: [setup, verify-aot, pack-nuget, publish-avalonia, build-maui]
     steps:
       - uses: actions/checkout@v4
 
@@ -195,31 +285,62 @@ jobs:
           prerelease: ${{ contains(needs.setup.outputs.version, '-') }}
 
   # ---------------------------------------------------------------------
-  # 7.（可选，默认不执行）推送到 nuget.org。
+  # 8.（可选，默认不执行）推送到 nuget.org。
   #    (Optional, off by default) Push to nuget.org.
   #    只有仓库 Secrets 中配置了 NUGET_API_KEY 才会运行；用户当前未要求启用此步骤。
   #    Only runs if NUGET_API_KEY is configured in repo Secrets; not requested to be
   #    enabled right now by the maintainer.
+  #
+  #    注意：job 级（以及 step 级）的 `if:` 条件不允许直接引用 `secrets` 上下文
+  #    （GitHub Actions 会在工作流校验阶段报错 "Unrecognized named-value: 'secrets'"，
+  #    导致整个工作流文件判定为不合法，一个 job 都跑不起来）。`secrets` 只能出现在
+  #    `env:`/`with:` 里。因此这里改用：job 本身总是被调度，但第一步先把 secret 读进
+  #    普通 env 变量、判断是否为空并写入 step output，后续步骤的 `if:` 只依赖这个
+  #    step output（不是 `secrets` 上下文），从而绕开这个限制。
+  #
+  #    Note: job-level (and step-level) `if:` conditions cannot directly reference the
+  #    `secrets` context (GitHub Actions rejects it at workflow-validation time with
+  #    "Unrecognized named-value: 'secrets'", which fails the *entire* workflow file
+  #    before any job runs). `secrets` may only appear inside `env:`/`with:`. So this
+  #    job always gets scheduled, but its first step reads the secret into a plain env
+  #    var, checks whether it's empty, and writes a step output; subsequent steps'
+  #    `if:` conditions only depend on that step output (not the `secrets` context),
+  #    sidestepping the restriction.
   # ---------------------------------------------------------------------
   publish-nuget-org:
     runs-on: ubuntu-latest
     needs: [pack-nuget, create-release]
-    if: ${{ secrets.NUGET_API_KEY != '' }}
-    env:
-      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
     steps:
+      - name: Check whether NUGET_API_KEY is configured
+        id: check
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -n "$NUGET_API_KEY" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "NUGET_API_KEY secret 未配置，跳过 nuget.org 推送 / NUGET_API_KEY secret not set, skipping nuget.org push"
+          fi
+
       - uses: actions/download-artifact@v4
+        if: steps.check.outputs.has_key == 'true'
         with:
           name: nuget-package
           path: artifacts
 
       - uses: actions/setup-dotnet@v4
+        if: steps.check.outputs.has_key == 'true'
         with:
           dotnet-version: "10.0.x"
 
       - name: Push to nuget.org
+        if: steps.check.outputs.has_key == 'true'
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
           dotnet nuget push "artifacts/*.nupkg" \
             --api-key "$NUGET_API_KEY" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
+

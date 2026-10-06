@@ -5,7 +5,7 @@
     build/{PackageId}.targets 只对"直接引用本包"的项目生效；
     buildTransitive/{PackageId}.targets 对"通过 ProjectReference 间接依赖本包"的项目
     也生效（现代 SDK 风格项目的 PackageReference 默认按传递方式解析）。
-    本仓库自己的 SevenZipLite.SelfTest/Tests/WpfDemo/MauiDemo 就是通过
+    本仓库自己的 SevenZipLite.SelfTest/Tests/AvaloniaDemo/MauiDemo 就是通过
     ProjectReference 依赖 src/SevenZipLite 的典型场景，需要 buildTransitive 才能让
     "最终跑起来的那个可执行项目"也拿到原生库。
 
@@ -15,7 +15,7 @@
     directly reference this package; buildTransitive/{PackageId}.targets also applies
     to projects that depend on it transitively via ProjectReference (which is how
     PackageReference resolves by default in modern SDK-style projects). This repo's
-    own SevenZipLite.SelfTest/Tests/WpfDemo/MauiDemo projects depend on
+    own SevenZipLite.SelfTest/Tests/AvaloniaDemo/MauiDemo projects depend on
     src/SevenZipLite via ProjectReference, which is exactly the scenario that needs
     buildTransitive for the final runnable executable project to receive the native
     library too.

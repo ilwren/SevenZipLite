@@ -42,10 +42,12 @@ binaries, update both locations.
 
 ## 已知缺口 / Known gaps
 
-- `win-arm64` 目前**没有**对应的 .csproj RID 配置（`SevenZipLite.WpfDemo.csproj` 只声明了
-  `x64`/`x86` 两个 Platform），这里放的二进制是预留，尚未接入。
-  `win-arm64` has no matching `.csproj` RID wiring yet (only `x64`/`x86` platforms are
-  declared); the binary here is a placeholder for future work.
+- `win-arm64` 目前**没有**对应的 .csproj RID 配置（`SevenZipLite.AvaloniaDemo.csproj` 的
+  原生库复制逻辑只识别 `win-x64`/`win-x86`/`linux-x64` 三个 RID），这里放的二进制是预留，
+  尚未接入。
+  `win-arm64` has no matching `.csproj` RID wiring yet (`SevenZipLite.AvaloniaDemo.csproj`'s
+  native-lib copy logic only recognizes the `win-x64`/`win-x86`/`linux-x64` RIDs); the
+  binary here is a placeholder for future work.
 - Android 交叉编译脚本（`build_android.sh`/`.ps1`）尚未提供，见仓库根 README "已知缺口"一节。
   The Android cross-compile script (`build_android.sh`/`.ps1`) has not been written yet;
   see the "Known gaps" section of the root README.

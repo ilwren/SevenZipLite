@@ -1,0 +1,186 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!--
+      跟 WPF 版本（net10.0-windows）最大的区别：这里是纯 net10.0，不带 "-windows" 后缀
+      （选 net10.0 而非更低的 net8.0 的原因见下一段注释）。Avalonia 本身就是跨平台 UI
+      框架，具体平台实现（Win32/X11/Wayland/macOS）由 Avalonia.Desktop 在运行时根据当前
+      OS 自动选择，不需要也不应该把 TargetFramework 锁定成某个平台专属 TFM——这也是这次
+      把 WPF Demo 换成 Avalonia Demo 的收益之一：win-x64/win-x86/linux-x64 三个 RID 共用
+      同一份 TFM，不用再像 WPF 项目那样为了 PlatformTarget/RuntimeIdentifier 的兼容性写
+      一堆条件判断（参见已删除的 SevenZipLite.WpfDemo.csproj 历史记录）。
+
+      The biggest difference from the old WPF project (net10.0-windows): this is plain
+      net10.0, no "-windows" suffix (see the next comment block for why net10.0 rather
+      than the lower net8.0). Avalonia is a cross-platform UI framework by design; the
+      concrete platform backend (Win32/X11/Wayland/macOS) is selected by
+      Avalonia.Desktop at runtime based on the current OS — there's no need (and no
+      benefit) to pin TargetFramework to a platform-specific TFM. This is also one of
+      the payoffs of replacing the WPF demo with this Avalonia demo: win-x64/win-x86/
+      linux-x64 all share the exact same TFM, with no need for the PlatformTarget/
+      RuntimeIdentifier compatibility conditionals the old WPF project needed (see the
+      now-deleted SevenZipLite.WpfDemo.csproj's history).
+
+      选 net10.0（而不是库支持的最低 TFM net8.0）：跟仓库里其余 samples/tests 项目
+      （SevenZipLite.SelfTest / SevenZipLite.Tests / SevenZipLite.MauiDemo）保持一致——
+      本项目引用的 SevenZipLite.SelfTest 只单一目标 net10.0（它的定位是"被各个 Demo
+      共享的自检用例代码"，不是要打包分发的库，没有多目标的必要），net8.0 会直接导致
+      NU1201 还原失败。Avalonia + Native AOT 组合官方样例虽然多数用 net8.0，但 net9.0/
+      net10.0 同样被官方验证支持（见 Avalonia 官方仓库关于 NativeAOT 的 issue/讨论），
+      不存在 net10.0 下 Avalonia AOT 不可用的问题。
+
+      Targets net10.0 (rather than net8.0, the library's lowest supported TFM): kept
+      consistent with every other samples/tests project in this repo (SevenZipLite.
+      SelfTest / SevenZipLite.Tests / SevenZipLite.MauiDemo). This project references
+      SevenZipLite.SelfTest, which only targets net10.0 (its job is to be shared
+      self-test case code across the demos, not a library meant for redistribution, so
+      multi-targeting it buys nothing) — targeting net8.0 here would simply fail restore
+      with NU1201. While most official Avalonia + Native AOT samples use net8.0, net9.0/
+      net10.0 are equally officially supported (see Avalonia's own NativeAOT issues/
+      discussions) — there's no Avalonia-AOT limitation specific to net10.0.
+    -->
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>SevenZipLite.AvaloniaDemo</RootNamespace>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+
+    <!--
+      本 Demo 跟 WPF 版本一样完全不用 {Binding ...} / DataContext / MVVM，所有控件都是
+      x:Name 具名引用 + 代码后置直接读写属性、挂事件处理器——这不是"偷懒"，而是刻意选择：
+      本项目的定位是"验证 SevenZipLite 类库在真实 GUI 应用里能否正常工作"，不是 MVVM 框架
+      的示范项目，用最朴素的代码后置方式能让读者的注意力完全集中在 SevenZipLite 的调用上。
+      顺带的好处是：没有 {Binding} 就没有反射型绑定，Native AOT 发布天然不会在这方面产生
+      任何裁剪/AOT 警告（上面 AvaloniaUseCompiledBindingsByDefault 是双重保险，万一以后
+      有人加了 {Binding} 语法，也会被编译期强制要求写成可裁剪安全的编译型绑定）。
+
+      This demo uses no {Binding ...} / DataContext / MVVM at all, same as the old WPF
+      version — every control is wired via a named x:Name reference and plain
+      code-behind property access / event handlers. That's a deliberate choice, not
+      laziness: this project's purpose is to verify the SevenZipLite library works
+      correctly in a real GUI app, not to showcase an MVVM framework, and the plainest
+      possible code-behind style keeps the reader's attention entirely on the
+      SevenZipLite calls. A side benefit: no {Binding} means no reflection-based
+      bindings, so the Native AOT publish naturally produces zero trimming/AOT warnings
+      on that front (AvaloniaUseCompiledBindingsByDefault above is a belt-and-braces
+      safety net — if anyone adds {Binding} syntax later, the compiler will force it to
+      be a trim-safe compiled binding instead of a reflection-based one).
+    -->
+  </PropertyGroup>
+
+  <!-- ==================== Native AOT 发布开关 / Native AOT publish switch ==================== -->
+  <PropertyGroup>
+    <!--
+      跟 src/SevenZipLite/SevenZipLite.csproj 的 IsAotCompatible 不是一回事：那个只是
+      "编译期静态分析"开关，这里的 PublishAot 才是真正在 `dotnet publish` 时触发 Native
+      AOT 编译、产出不依赖 .NET 运行时的原生可执行文件。本项目能打开这个开关、且
+      `dotnet publish -p:PublishAot=true` 零警告通过，依据有二：
+        1) SevenZipLite 类库本身已验证 AOT 兼容（见 src/SevenZipLite/SevenZipLite.csproj
+           的注释与 tests/SevenZipLite.AotSmokeTest）；
+        2) 本 Demo 不使用 {Binding}/MVVM（见上面的注释），Avalonia 侧唯一的 AOT 风险点
+           （反射型绑定）被从源头上排除。
+      不按 Configuration 区分（没有写 Condition="'$(Configuration)'=='Release'"）：
+      微软官方指导是 PublishAot 不应该按构建配置区分（见 .NET MAUI Native AOT 文档），
+      因为裁剪相关的功能开关要在所有配置下保持一致，代码行为才不会出现"Debug 正常、
+      Release 跑不起来"的不一致；真正只在"发布"时才会生效（`dotnet build`/`dotnet run`
+      不受影响，本地日常开发体验不变）。
+
+      Distinct from src/SevenZipLite/SevenZipLite.csproj's IsAotCompatible: that one is
+      only a compile-time static-analysis opt-in. PublishAot here is what actually
+      triggers Native AOT compilation during `dotnet publish`, producing a native
+      executable with no .NET runtime dependency. This project can safely turn it on
+      (and `dotnet publish -p:PublishAot=true` passes with zero warnings) for two
+      reasons: 1) the SevenZipLite library itself is already AOT-verified (see
+      SevenZipLite.csproj's comments and tests/SevenZipLite.AotSmokeTest); 2) this demo
+      uses no {Binding}/MVVM (see above), eliminating Avalonia's main AOT risk
+      (reflection-based bindings) at the source. Not conditioned on Configuration
+      (no Condition="'$(Configuration)'=='Release'"): Microsoft's official guidance is
+      that PublishAot shouldn't vary by build configuration (see the .NET MAUI Native
+      AOT docs), because trimming-related feature switches need to stay consistent
+      across configurations so code behavior doesn't silently diverge between Debug and
+      Release. It only actually takes effect when publishing — `dotnet build`/`dotnet
+      run` are unaffected, so everyday local development is unchanged.
+    -->
+    <PublishAot>true</PublishAot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" Condition="Exists('Assets')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.3" />
+    <!--
+      本项目没有引用 Avalonia.Diagnostics（F12 开发者工具）：这个包目前还停留在 11.3.x
+      版本线，尚未随 Avalonia 核心包一起发布 12.x 版本（截至本项目编写时，nuget.org 上
+      Avalonia/Avalonia.Desktop/Avalonia.Themes.Fluent 都已是 12.1.3，Avalonia.Diagnostics
+      最新仍是 11.3.22），版本不匹配会导致还原失败。它本身也只是开发期辅助工具，不影响
+      应用功能或本项目要验证的 Native AOT 发布，所以直接不引用，而不是想办法凑一个
+      能用的版本组合。
+
+      This project does not reference Avalonia.Diagnostics (the F12 dev tools overlay):
+      that package is still on the 11.3.x version line and hasn't shipped a 12.x release
+      alongside the core Avalonia packages (as of writing, Avalonia/Avalonia.Desktop/
+      Avalonia.Themes.Fluent are all at 12.1.3 on nuget.org, while Avalonia.Diagnostics'
+      latest is still 11.3.22) — referencing it would cause a version-mismatch restore
+      failure. It's also just a development-time convenience tool that doesn't affect
+      app functionality or the Native AOT publish this project exists to verify, so it's
+      simply omitted rather than forcing together a working version combination.
+    -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SevenZipLite\SevenZipLite.csproj" />
+    <ProjectReference Include="..\..\tests\SevenZipLite.SelfTest\SevenZipLite.SelfTest.csproj" />
+  </ItemGroup>
+
+  <!--
+    原生库分发策略：跟旧 WPF Demo 的思路一致（复制到输出目录根，供
+    [LibraryImport("7zlite")] 的默认探测规则找到），但选择依据从 PlatformTarget（WPF 只
+    支持 Windows，靠 x86/x64 的 PlatformTarget 区分）换成了 RuntimeIdentifier（Avalonia
+    跨平台，发布时 -r win-x64/win-x86/linux-x64 才是真正决定"要哪份原生库"的依据）。
+    额外加一组"没有指定 RID 时按当前构建机器操作系统兜底"的判断，覆盖本地
+    `dotnet run`/`dotnet build`（不带 -r）的日常开发场景——这组兜底判断等价于
+    src/SevenZipLite/msbuild-targets/SevenZipLite.Native.targets 打进 NuGet 包里的那份，
+    但这里是 ProjectReference 不是 PackageReference，那份包内 targets 不会自动生效，
+    所以在本项目里单独复刻一份同样的兜底逻辑。
+
+    Native binary distribution strategy mirrors the old WPF demo (copy to the output
+    root so [LibraryImport("7zlite")]'s default probing finds it), but the selection
+    key changes from PlatformTarget (WPF is Windows-only, distinguishing x86/x64 via
+    PlatformTarget) to RuntimeIdentifier (Avalonia is cross-platform; publishing with
+    -r win-x64/win-x86/linux-x64 is what actually decides which native binary is
+    needed). An extra "fall back to the current build machine's OS when no RID is
+    specified" branch covers everyday local `dotnet run`/`dotnet build` (without -r) —
+    equivalent to what src/SevenZipLite/msbuild-targets/SevenZipLite.Native.targets
+    does when packed into the NuGet package, but since this project uses a
+    ProjectReference rather than a PackageReference, that packed-in targets file
+    doesn't automatically apply here, so the same fallback logic is reproduced locally
+    in this project instead.
+  -->
+  <PropertyGroup>
+    <_AvaloniaDemoNativeRid Condition="'$(_AvaloniaDemoNativeRid)' == '' And '$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_AvaloniaDemoNativeRid>
+    <_AvaloniaDemoNativeRid Condition="'$(_AvaloniaDemoNativeRid)' == '' And $([MSBuild]::IsOSPlatform('Windows'))">win-x64</_AvaloniaDemoNativeRid>
+    <_AvaloniaDemoNativeRid Condition="'$(_AvaloniaDemoNativeRid)' == '' And $([MSBuild]::IsOSPlatform('Linux'))">linux-x64</_AvaloniaDemoNativeRid>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(_AvaloniaDemoNativeRid)' == 'win-x64' And Exists('..\..\native-libs\win-x64\7zlite.dll')">
+    <None Include="..\..\native-libs\win-x64\7zlite.dll" Link="7zlite.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(_AvaloniaDemoNativeRid)' == 'win-x86' And Exists('..\..\native-libs\win-x86\7zlite.dll')">
+    <None Include="..\..\native-libs\win-x86\7zlite.dll" Link="7zlite.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(_AvaloniaDemoNativeRid)' == 'win-arm64' And Exists('..\..\native-libs\win-arm64\7zlite.dll')">
+    <None Include="..\..\native-libs\win-arm64\7zlite.dll" Link="7zlite.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(_AvaloniaDemoNativeRid)' == 'linux-x64' And Exists('..\..\native-libs\linux-x64\lib7zlite.so')">
+    <None Include="..\..\native-libs\linux-x64\lib7zlite.so" Link="lib7zlite.so" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

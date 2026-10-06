@@ -43,16 +43,17 @@ official 7-Zip command-line tools.
   parameter) to make full use of multi-core CPUs.
 - **Selectable zip compression method**: `Store` (no compression) or `Deflate`.
 - **Validated on three platforms**: Windows (x64/x86/arm64), Linux (x64), Android
-  (arm64-v8a/armeabi-v7a/x86_64/x86), each backed by a runnable demo — WPF, a Linux console
-  self-test, and .NET MAUI.
+  (arm64-v8a/armeabi-v7a/x86_64/x86), each backed by a runnable demo — Avalonia (Windows/
+  Linux desktop), a Linux console self-test, and .NET MAUI.
 - **No extra managed dependencies**: the core library depends only on the .NET BCL — no
   third-party compression or COM interop packages.
 - **Multi-targeted**: the core library targets both **`net8.0`** (current LTS) and
   **`net10.0`**, so projects that haven't upgraded to the latest .NET yet can reference it
   directly.
-- **WPF demo follows the system light/dark theme**: `samples/SevenZipLite.WpfDemo` uses the
-  WPF Fluent theme introduced in .NET 9 (`ThemeMode="System"`), automatically switching its
-  appearance to match the Windows light/dark mode setting.
+- **Avalonia demo is cross-platform and Native AOT-published**: `samples/SevenZipLite.
+  AvaloniaDemo` runs the same codebase on both Windows (win-x64/win-x86) and Linux
+  (linux-x64) via the cross-platform Avalonia UI framework, and is published with Native
+  AOT (`PublishAot=true`) as a native executable that doesn't require the .NET runtime.
 
 ## Supported platforms and formats
 
@@ -116,7 +117,7 @@ SevenZipLite/
 │   ├── SevenZipLite.SelfTest/     # Reusable self-test/perf/stress test runners (public API)
 │   └── SevenZipLite.Tests/        # Linux console self-test program (--stress runs the stress test)
 ├── samples/
-│   ├── SevenZipLite.WpfDemo/      # Windows WPF visual demo
+│   ├── SevenZipLite.AvaloniaDemo/ # Cross-platform Avalonia visual demo (Windows/Linux, Native AOT-published)
 │   └── SevenZipLite.MauiDemo/     # .NET MAUI (Android) demo
 ├── native/
 │   └── 7zip-src/                  # Official, unmodified 7-Zip source (kept as-is, used to build native libs locally)
@@ -145,12 +146,14 @@ SevenZipLite/
   matching [.NET SDK](https://dotnet.microsoft.com/download) is enough to build it. The
   repo's own test/demo projects are pinned to **.NET SDK 10.0**; installing the 10.0 SDK is
   recommended (it can also compile the `net8.0` target).
-- The Windows-specific project (`SevenZipLite.WpfDemo`) must be built/run on Windows with
-  `dotnet build`/`dotnet run`. On non-Windows platforms you can do a headless compile check
-  with `-p:EnableWindowsTargeting=true`, but you cannot run its UI. This project uses the
-  WPF Fluent theme's `ThemeMode` API introduced in .NET 9, so its `TargetFramework` is pinned
-  to `net10.0-windows` (any `net9.0-windows` or later would work; unrelated to the core
-  library's net8.0 target).
+- `SevenZipLite.AvaloniaDemo` is cross-platform: it builds/runs/publishes directly with
+  `dotnet build`/`dotnet run`/`dotnet publish` on both Windows and Linux, targeting plain
+  `net10.0` (no `-windows` or other OS-specific TFM suffix) — no `EnableWindowsTargeting`
+  headless-compile trick needed. The project hardcodes `PublishAot=true` in its csproj, so
+  any `dotnet publish -r <win-x64|win-x86|linux-x64>` produces a Native AOT native
+  executable that doesn't require the target machine to have the .NET runtime installed;
+  however, Native AOT's code generator doesn't support cross-OS compilation, so win-x64/
+  win-x86 publishes must run on Windows and linux-x64 publishes must run on Linux.
 - `SevenZipLite.MauiDemo` requires the .NET MAUI workload
   (`dotnet workload install maui`) and the Android SDK/NDK.
 
@@ -169,15 +172,21 @@ dotnet run --project tests/SevenZipLite.Tests -c Release
 dotnet run --project tests/SevenZipLite.Tests -c Release -- --stress
 ```
 
-### Run the WPF demo (Windows only)
+### Run the Avalonia demo (Windows / Linux)
 
-```powershell
-dotnet run --project samples\SevenZipLite.WpfDemo -c Release
+```bash
+# Plain JIT run (for development/debugging)
+dotnet run --project samples/SevenZipLite.AvaloniaDemo -c Release
+
+# Native AOT publish (produces a native executable that doesn't require the .NET runtime;
+# win-x64/win-x86 must be run on Windows, linux-x64 must be run on Linux — Native AOT's
+# code generator doesn't support cross-OS compilation)
+dotnet publish samples/SevenZipLite.AvaloniaDemo -c Release -r linux-x64 --self-contained true
 ```
 
-If the native library is missing, the app shows a clear (Chinese-language) error message
-pointing you to `native-libs/win-{x64,x86,arm64}/`, or explains how to copy `7z.dll` from a
-local 7-Zip install and rename it to `7zlite.dll`.
+If the native library is missing, the app shows a clear error message (in Chinese or
+English depending on the OS) pointing you to `native-libs/{win-x64,win-x86,win-arm64,
+linux-x64}/`, or explains how to build/obtain the native library yourself.
 
 ### Run the MAUI demo (Android)
 
@@ -189,7 +198,7 @@ dotnet build samples/SevenZipLite.MauiDemo -f net10.0-android -c Debug -t:Run
 
 - **Correctness tests**: `SevenZipLite.SelfTest.SelfTestRunner.RunAll` — 13 test cases covering
   7z/zip/tar/tar.gz × multi-volume × password × zip method combinations. All three demos
-  (Linux console, WPF, MAUI) wire this up and show results in their console/UI.
+  (Linux console, Avalonia, MAUI) wire this up and show results in their console/UI.
 - **Performance tests**: `SevenZipLite.SelfTest.PerfTestRunner` — round-trip throughput test
   with a large synthetic file (up to ~1GB).
 - **Multi-threading stress test**: `SevenZipLite.SelfTest.MultiThreadStressRunner` — repeated
@@ -228,12 +237,16 @@ a `v*`-style tag (e.g. `v1.0.0`) is pushed, and runs:
 
 1. `SevenZipLite.Tests` self-tests (including the `--stress` stress test) on a Linux runner, as
    a pre-release quality gate.
-2. Packs `.nupkg`/`.snupkg` with `scripts/pack-nuget.sh` (version taken from the tag).
-3. `dotnet publish`es the WPF demo on a Windows runner (win-x64 and win-x86), zipped as
-   artifacts.
-4. Installs the MAUI workload on an Ubuntu runner and builds an Android APK (unsigned Release
+2. Publishes `tests/SevenZipLite.AotSmokeTest` as Native AOT and runs it on a Linux runner, to
+   verify the core library's `IsAotCompatible` claim actually works under AOT (not just
+   compiles).
+3. Packs `.nupkg`/`.snupkg` with `scripts/pack-nuget.sh` (version taken from the tag).
+4. Publishes the Avalonia demo as Native AOT for win-x64, win-x86 (on a Windows runner) and
+   linux-x64 (on an Ubuntu runner) — three native executables, each zipped as an artifact.
+5. Installs the MAUI workload on an Ubuntu runner and builds an Android APK (unsigned Release
    or Debug configuration).
-5. Attaches all of the above artifacts (`.nupkg`, `.snupkg`, WPF zips, APK) to a newly created
+6. Attaches all of the above artifacts (`.nupkg`, `.snupkg`, 3× Avalonia demo zips, APK) to a
+   newly created
    GitHub Release.
 6. An optional nuget.org push step: **disabled by default**, only runs if `NUGET_API_KEY` is
    configured in the repo's Secrets (not needed right now, left off per the maintainer's

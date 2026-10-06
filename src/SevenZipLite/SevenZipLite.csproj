@@ -8,6 +8,39 @@
     <RootNamespace>SevenZipLite</RootNamespace>
     <AssemblyName>SevenZipLite</AssemblyName>
     <!--
+      声明本库是 Native AOT / trimming 兼容的（实测验证过，不是一厢情愿的声明）：
+      P/Invoke 全部用源码生成的 [LibraryImport]（Native/NativeMethods.cs），COM 互操作
+      全部用 .NET 8+ 源码生成 COM（[GeneratedComInterface]/[GeneratedComClass] +
+      StrategyBasedComWrappers，见 Native/ComFactory.cs），字符串/结构体编组是手写
+      unsafe 指针（Native/Utf32Marshal.cs、Native/PropVariant.cs），全仓库不存在
+      Activator.CreateInstance / Reflection.Emit / MakeGenericMethod 这类 AOT 黑名单
+      用法。实测：`dotnet publish -r linux-x64 -p:PublishAot=true`（net8.0 与 net10.0
+      两个目标框架）编译 0 警告，且发布出的原生可执行文件能完整跑通"创建带密码 zip →
+      列出条目 → 解压 → 校验内容"的真实业务流程，结果正确。这个标记打开后会让消费方
+      的 IDE/编译器自动跑 AOT 分析器，并在 NuGet.org 包页面上显示"AOT 兼容"标记；
+      tests/SevenZipLite.AotSmokeTest 项目把上述验证流程固化成了可重复执行的 CI 用例
+      （见 .github/workflows/release.yml 的 verify-aot job），防止以后的改动在不知不觉
+      间引入反射等破坏 AOT 兼容性的写法。
+
+      Declares this library as Native AOT / trimming compatible (verified by actually
+      running it, not a hopeful assertion): all P/Invoke uses source-generated
+      [LibraryImport] (Native/NativeMethods.cs), all COM interop uses .NET 8+
+      source-generated COM ([GeneratedComInterface]/[GeneratedComClass] +
+      StrategyBasedComWrappers, see Native/ComFactory.cs), string/struct marshalling is
+      hand-written unsafe pointer code (Native/Utf32Marshal.cs, Native/PropVariant.cs),
+      and there is no Activator.CreateInstance / Reflection.Emit / MakeGenericMethod
+      anywhere in the repo (all AOT blocklist patterns). Verified: `dotnet publish -r
+      linux-x64 -p:PublishAot=true` (both net8.0 and net10.0) compiles with 0 warnings,
+      and the published native executable successfully runs a real end-to-end flow
+      (create a password-protected zip -> list entries -> extract -> verify content)
+      with correct results. Turning this flag on makes consuming IDEs/compilers run the
+      AOT analyzer automatically and shows an "AOT compatible" badge on the NuGet.org
+      package page; tests/SevenZipLite.AotSmokeTest turns the verification above into a
+      repeatable CI case (see the verify-aot job in .github/workflows/release.yml) so a
+      future change can't silently reintroduce something AOT-incompatible.
+    -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <!--
       本类库是跨平台的多目标程序集（net8.0 + net10.0），同时支持 Linux / Android
       （wchar_t 4 字节、7-Zip 自造 UTF-32 BSTR）和 Windows（wchar_t 2 字节、真正的
       OLE BSTR）。两套原生 ABI 的差异（字符串编码/分配器、PROPVARIANT 结构体大小）在
@@ -105,14 +138,14 @@
     `runtimes/{rid}/native/` 只在消费方项目**声明了 RuntimeIdentifier**（或做 self-contained /
     单文件发布）时才会被自动拷贝到输出目录——这是 NuGet/.NET SDK 的既有限制，不是本包特有问题。
     为了让"没有指定 RID 的普通 `dotnet run`/`dotnet build`"也能直接可用（本仓库自己的
-    WPF/Linux 控制台 Demo 就是这种典型场景），额外提供 build/ 与 buildTransitive/ 下的
+    Avalonia/Linux 控制台 Demo 就是这种典型场景），额外提供 build/ 与 buildTransitive/ 下的
     .targets 文件，按当前编译所在的操作系统/架构把对应原生库复制到输出目录——见那两个文件的注释。
 
     `runtimes/{rid}/native/` assets are only auto-copied to the output directory when the
     consuming project declares a RuntimeIdentifier (or publishes self-contained / as a
     single file) — this is an inherent NuGet/.NET SDK limitation, not specific to this
     package. To make plain, non-RID `dotnet run`/`dotnet build` work out of the box too
-    (this is exactly how this repo's own WPF/Linux-console demos are set up), this package
+    (this is exactly how this repo's own Avalonia/Linux-console demos are set up), this package
     additionally ships .targets files under build/ and buildTransitive/ that copy the
     matching native library to the output directory based on the current build machine's
     OS/architecture — see the comments in those files.

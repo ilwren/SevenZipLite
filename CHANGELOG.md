@@ -4,7 +4,31 @@
 
 ## [Unreleased]
 
-（暂无）/ (nothing yet)
+### 变更 / Changed
+- **用跨平台的 Avalonia Demo 替换了 WPF Demo**：`samples/SevenZipLite.WpfDemo` 已删除，
+  新增 `samples/SevenZipLite.AvaloniaDemo`，功能上与旧 WPF Demo 完全对等（内置自检、手动
+  压缩/解压、大文件吞吐量测试、多线程压力测试四大板块），但改用跨平台的 Avalonia UI 框架，
+  同一套代码可在 Windows 和 Linux 上运行，并以 Native AOT（`PublishAot=true`）方式发布为
+  win-x64、win-x86、linux-x64 三个 RID 的原生可执行文件（不依赖目标机器安装 .NET 运行时）。
+  CI 发布流程中的 `publish-wpf` job 相应替换为 `publish-avalonia`（三个 RID 各自在匹配的
+  操作系统 runner 上发布，因为 Native AOT 不支持跨操作系统编译）。
+  **Replaced the WPF demo with a cross-platform Avalonia demo**: `samples/
+  SevenZipLite.WpfDemo` has been removed and `samples/SevenZipLite.AvaloniaDemo` added in
+  its place, with full functional parity to the old WPF demo (built-in self-test, manual
+  pack/extract, large-file throughput test, and multi-thread stress test) but built on the
+  cross-platform Avalonia UI framework — the same codebase runs on both Windows and Linux,
+  and is published with Native AOT (`PublishAot=true`) as native executables for the
+  win-x64, win-x86, and linux-x64 RIDs (no .NET runtime required on the target machine).
+  The CI release pipeline's `publish-wpf` job was replaced with `publish-avalonia`
+  accordingly (each RID publishes on its matching OS runner, since Native AOT doesn't
+  support cross-OS compilation).
+- 核心库（`src/SevenZipLite`）新增 `<IsAotCompatible>true</IsAotCompatible>`，并新增永久性的
+  `tests/SevenZipLite.AotSmokeTest` 项目，在 CI 的 `verify-aot` job 中把它发布为 Native AOT
+  并实际运行，验证核心库在 AOT 下真的可用（而不只是声明兼容）。
+  The core library (`src/SevenZipLite`) gained `<IsAotCompatible>true</IsAotCompatible>`,
+  along with a new permanent `tests/SevenZipLite.AotSmokeTest` project that the CI
+  `verify-aot` job publishes as Native AOT and actually runs, verifying the core library
+  truly works under AOT (not just declaring compatibility).
 
 ## [0.1.0] - 2026-09-28
 

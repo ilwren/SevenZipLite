@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  标准 Avalonia 桌面应用模板自带的 Windows 应用清单：声明支持的 Windows 版本（让系统
+  API 按实际新版本而非兼容模式解析）+ 开启 Per-Monitor V2 DPI 感知（多显示器混合 DPI
+  下界面不被系统强制拉伸模糊）。跟 SevenZipLite 类库本身无关，是 GUI 应用的通用最佳
+  实践，Native AOT 发布同样支持内嵌应用清单，不需要额外处理。
+
+  Standard Windows application manifest shipped with Avalonia's desktop app template:
+  declares supported Windows versions (so system APIs resolve against the real OS
+  version instead of compatibility-shimmed ones) and enables Per-Monitor V2 DPI
+  awareness (so the UI isn't blurrily upscaled by the OS on mixed-DPI multi-monitor
+  setups). Unrelated to the SevenZipLite library itself — this is a general GUI-app
+  best practice, and Native AOT publishing supports embedding an application manifest
+  the same way, no extra handling needed.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 7 -->
+      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}" />
+      <!-- Windows 8 -->
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}" />
+      <!-- Windows 8.1 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" />
+      <!-- Windows 10/11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>

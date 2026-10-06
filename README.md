@@ -38,12 +38,14 @@
 - **多线程压缩**：可控制压缩线程数（`threadCount` 参数），充分利用多核 CPU。
 - **zip 压缩方法可选**：`Store`（不压缩）或 `Deflate`。
 - **三平台验证**：Windows（x64/x86/arm64）、Linux（x64）、Android（arm64-v8a/armeabi-v7a/
-  x86_64/x86），分别提供 WPF、Linux 控制台自测、.NET MAUI 三个可运行的 Demo。
+  x86_64/x86），分别提供 Avalonia（Windows/Linux 桌面）、Linux 控制台自测、.NET MAUI 三个
+  可运行的 Demo。
 - **无额外托管依赖**：核心库只依赖 .NET BCL，不引入第三方压缩/COM 互操作包。
 - **多目标框架**：核心库同时支持 **`net8.0`**（当前 LTS）与 **`net10.0`**，尚未升级到最新
   .NET 版本的项目也可以直接引用。
-- **WPF Demo 跟随系统深浅色主题**：`samples/SevenZipLite.WpfDemo` 使用 .NET 9 起引入的 WPF
-  Fluent 主题（`ThemeMode="System"`），随 Windows 系统的浅色/深色模式设置自动切换外观。
+- **Avalonia Demo 跨平台、Native AOT 发布**：`samples/SevenZipLite.AvaloniaDemo` 用跨平台的
+  Avalonia UI 框架一套代码同时跑在 Windows（win-x64/win-x86）和 Linux（linux-x64）上，并以
+  Native AOT（`PublishAot=true`）方式发布为不依赖 .NET 运行时的原生可执行文件。
 
 ## 支持的平台与格式
 
@@ -104,7 +106,7 @@ SevenZipLite/
 │   ├── SevenZipLite.SelfTest/     # 可复用的自测/性能/压力测试运行器（public API）
 │   └── SevenZipLite.Tests/        # Linux 控制台自测程序（--stress 跑压力测试）
 ├── samples/
-│   ├── SevenZipLite.WpfDemo/      # Windows WPF 可视化 Demo
+│   ├── SevenZipLite.AvaloniaDemo/ # 跨平台 Avalonia 可视化 Demo（Windows/Linux，Native AOT 发布）
 │   └── SevenZipLite.MauiDemo/     # .NET MAUI（Android）Demo
 ├── native/
 │   └── 7zip-src/                  # 官方未裁剪 7-Zip 源码（原样保留，用于本地编译原生库）
@@ -132,10 +134,12 @@ SevenZipLite/
 - 核心库 `src/SevenZipLite` 多目标 **`net8.0` / `net10.0`**，安装其中任一版本对应的
   [.NET SDK](https://dotnet.microsoft.com/download) 即可构建它；仓库自带的测试/Demo 项目
   固定使用 **.NET SDK 10.0**，建议直接安装 10.0 SDK（内置对 8.0 目标框架的编译支持）。
-- Windows 相关项目（`SevenZipLite.WpfDemo`）需要在 Windows 上用 `dotnet build`/`dotnet run`
-  构建运行；在非 Windows 平台可以用 `-p:EnableWindowsTargeting=true` 做无头编译验证，但无法
-  运行 UI。该项目使用了 .NET 9 引入的 WPF Fluent 主题（`ThemeMode`），因此其 `TargetFramework`
-  固定为 `net10.0-windows`（>= `net9.0-windows` 即可，不受核心库 net8.0 目标的影响）。
+- `SevenZipLite.AvaloniaDemo` 跨平台：在 Windows、Linux 上均可直接 `dotnet build`/`dotnet
+  run`/`dotnet publish` 构建运行，普通 TFM 为 `net10.0`（不带 `-windows` 等平台后缀），不需要
+  `EnableWindowsTargeting` 之类的无头编译技巧。该项目把 `PublishAot=true` 写死在 csproj 里，
+  因此任何 `dotnet publish -r <win-x64|win-x86|linux-x64>` 都会产出 Native AOT 原生可执行
+  文件，不依赖目标机器安装 .NET 运行时；但 Native AOT 的代码生成器不支持跨操作系统编译，
+  发布 win-x64/win-x86 必须在 Windows 上执行，发布 linux-x64 必须在 Linux 上执行。
 - `SevenZipLite.MauiDemo` 需要安装 .NET MAUI workload（`dotnet workload install maui`）及
   Android SDK/NDK。
 
@@ -154,14 +158,19 @@ dotnet run --project tests/SevenZipLite.Tests -c Release
 dotnet run --project tests/SevenZipLite.Tests -c Release -- --stress
 ```
 
-### 运行 WPF Demo（仅 Windows）
+### 运行 Avalonia Demo（Windows / Linux）
 
-```powershell
-dotnet run --project samples\SevenZipLite.WpfDemo -c Release
+```bash
+# 普通 JIT 运行（开发调试用）
+dotnet run --project samples/SevenZipLite.AvaloniaDemo -c Release
+
+# Native AOT 发布（生成不依赖 .NET 运行时的原生可执行文件；win-x64/win-x86 必须在 Windows 上
+# 执行，linux-x64 必须在 Linux 上执行 —— Native AOT 的代码生成器不支持跨操作系统编译）
+dotnet publish samples/SevenZipLite.AvaloniaDemo -c Release -r linux-x64 --self-contained true
 ```
 
-如果原生库缺失，程序会给出明确的中文错误提示，指引你从 `native-libs/win-{x64,x86,arm64}/`
-获取或从本地 7-Zip 安装目录复制 `7z.dll` 改名为 `7zlite.dll`。
+如果原生库缺失，程序会给出明确的中文/英文错误提示（随运行平台自动切换），指引你从
+`native-libs/{win-x64,win-x86,win-arm64,linux-x64}/` 获取或自行编译。
 
 ### 运行 MAUI Demo（Android）
 
@@ -172,8 +181,8 @@ dotnet build samples/SevenZipLite.MauiDemo -f net10.0-android -c Debug -t:Run
 ## 测试
 
 - **正确性测试**：`SevenZipLite.SelfTest.SelfTestRunner.RunAll`，覆盖 7z/zip/tar/tar.gz ×
-  分卷 × 密码 × zip 方法的 13 组用例，三个 Demo（Linux 控制台、WPF、MAUI）都接入了这套测试并
-  在界面/控制台展示结果。
+  分卷 × 密码 × zip 方法的 13 组用例，三个 Demo（Linux 控制台、Avalonia、MAUI）都接入了这套
+  测试并在界面/控制台展示结果。
 - **性能测试**：`SevenZipLite.SelfTest.PerfTestRunner`，大文件（最高约 1GB）往返吞吐量测试。
 - **多线程压力测试**：`SevenZipLite.SelfTest.MultiThreadStressRunner`，多轮次创建/解压/校验，
   用于验证多线程压缩路径的稳定性（历史上这里出现过一次已修复的竞态 bug，详见
@@ -205,10 +214,14 @@ dotnet build samples/SevenZipLite.MauiDemo -f net10.0-android -c Debug -t:Run
 （如 `v1.0.0`）时自动触发，依次执行：
 
 1. 在 Linux runner 上跑 `SevenZipLite.Tests` 自测（含 `--stress` 压力测试）作为发布前质量门槛。
-2. 用 `scripts/pack-nuget.sh` 打出 `.nupkg`/`.snupkg`（版本号取自 tag）。
-3. 在 Windows runner 上 `dotnet publish` WPF Demo（win-x64 与 win-x86），打包为 zip。
-4. 在 Ubuntu runner 上安装 MAUI workload，构建 Android APK（未签名 Release 或 Debug 配置）。
-5. 把上述所有产物（`.nupkg`、`.snupkg`、WPF zip、APK）作为附件创建一个 GitHub Release。
+2. 在 Linux runner 上把 `tests/SevenZipLite.AotSmokeTest` 发布为 Native AOT 并运行，验证核心库
+   `IsAotCompatible` 之后仍然真的能在 AOT 下跑通（而不只是编译期声明兼容）。
+3. 用 `scripts/pack-nuget.sh` 打出 `.nupkg`/`.snupkg`（版本号取自 tag）。
+4. 把 Avalonia Demo 以 Native AOT 方式发布为 win-x64、win-x86（Windows runner）与 linux-x64
+   （Ubuntu runner）三份原生可执行文件，分别打包为 zip。
+5. 在 Ubuntu runner 上安装 MAUI workload，构建 Android APK（未签名 Release 或 Debug 配置）。
+6. 把上述所有产物（`.nupkg`、`.snupkg`、Avalonia Demo zip ×3、APK）作为附件创建一个 GitHub
+   Release。
 6. 可选的 nuget.org 推送步骤：**默认不执行**，只有在仓库 Secrets 里配置了 `NUGET_API_KEY`
    时才会启用（当前不需要，按用户要求保持关闭）。
 

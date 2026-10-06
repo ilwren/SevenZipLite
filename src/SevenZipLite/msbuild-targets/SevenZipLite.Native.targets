@@ -6,7 +6,7 @@
     RuntimeIdentifier（或发布为 self-contained / 单文件）时才会被自动复制到输出目录，
     这是 .NET SDK 的既有行为，不是本包的 bug。为了让"没有指定 RID 的普通
     `dotnet run`/`dotnet build`"（本仓库自己的 Linux 控制台 Demo、以及大多数开发者
-    F5 调试 WPF 应用时的典型场景）也能自动拿到正确的原生库，这个文件在**每次构建**时
+    F5 调试 Avalonia 应用时的典型场景）也能自动拿到正确的原生库，这个文件在**每次构建**时
     根据当前是 Windows 还是 Linux、进程位数是多少，从本包的 runtimes/ 目录里挑一个
     对应的原生库复制到输出目录根。
 
@@ -15,7 +15,7 @@
     publishes self-contained / as a single file) — this is inherent .NET SDK
     behavior, not a bug in this package. To make plain, non-RID
     `dotnet run`/`dotnet build` (this repo's own Linux console demo, and the common
-    case of F5-debugging a WPF app) work out of the box too, this file copies the
+    case of F5-debugging an Avalonia app) work out of the box too, this file copies the
     matching native binary from this package's own runtimes/ folder to the output
     directory root on **every build**, based on the current OS and process bitness.
 

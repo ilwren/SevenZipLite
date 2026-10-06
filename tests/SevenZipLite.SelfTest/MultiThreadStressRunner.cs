@@ -13,7 +13,7 @@ namespace SevenZipLite.SelfTest;
 /// 这是一个独立于 13 项正确性自检（<see cref="SelfTestRunner.RunAll"/>）之外的可选
 /// 诊断工具，不混入默认自检流程（跑起来比较慢，且目的不同：这里关心的是"多轮/高并发下
 /// 会不会出现偶发的竞态"，而不是"单次操作的结果是否正确"）。三个 Demo 入口（Linux 控制台
-/// <c>SevenZipLite.Tests</c>、WPF、MAUI）都应该提供触发它的独立入口，但不应该让它默认跟随
+/// <c>SevenZipLite.Tests</c>、Avalonia、MAUI）都应该提供触发它的独立入口，但不应该让它默认跟随
 /// 应用启动自动运行。
 /// </summary>
 public static class MultiThreadStressRunner
