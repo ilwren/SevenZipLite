@@ -24,15 +24,22 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         // 显示当前进程/RID/OS 信息，方便确认现在实际加载/验证的是哪一份原生库
-        // （7zlite.dll 还是 lib7zlite.so，win-x64/win-x86/linux-x64 中的哪一个）——
+        // （7zlite.dll 还是 lib7zlite.so，win-x64/linux-x64 中的哪一个；这里只是如实
+        // 显示运行时探测到的 RuntimeIdentifier，不是只允许这两个值——如果有人用
+        // `dotnet run -r win-x86` 之类方式在别的 RID 下跑起来，这里也会如实显示）——
         // 跟旧 WPF 版本的用途完全一样，只是不再局限于"win-x64 / win-x86"两个选项，
-        // 因为 Avalonia 版本同时覆盖了 Linux。
+        // 因为 Avalonia 版本同时覆盖了 Linux（但本 Demo 正式支持并由 CI 以 Native AOT
+        // 发布的目标只有 win-x64 / linux-x64，不含 win-x86——见 .csproj 里的说明）。
         //
         // Shows the current process/RID/OS info, to help confirm which native binary
-        // is actually loaded/verified right now (7zlite.dll vs. lib7zlite.so, and which
-        // of win-x64/win-x86/linux-x64) — same purpose as the old WPF version, just no
-        // longer limited to "win-x64 / win-x86" only, since the Avalonia version also
-        // covers Linux.
+        // is actually loaded/verified right now (7zlite.dll vs. lib7zlite.so, win-x64
+        // or linux-x64; this just reports whatever RuntimeIdentifier is detected at
+        // runtime, it isn't restricted to only those two values — if someone runs it
+        // under a different RID via e.g. `dotnet run -r win-x86`, it'll report that
+        // too) — same purpose as the old WPF version, just no longer limited to
+        // "win-x64 / win-x86" only, since the Avalonia version also covers Linux (but
+        // the only RIDs this demo officially supports and CI publishes as Native AOT
+        // are win-x64 / linux-x64, not win-x86 — see the .csproj comments).
         string arch = Environment.Is64BitProcess ? "64-bit" : "32-bit";
         string rid = RuntimeInformation.RuntimeIdentifier;
         HeaderLabel.Text = $"SevenZipLite Avalonia 演示 —— 当前进程: {arch}，RuntimeIdentifier: {rid}，" +

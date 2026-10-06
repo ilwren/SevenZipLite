@@ -44,8 +44,9 @@
 - **多目标框架**：核心库同时支持 **`net8.0`**（当前 LTS）与 **`net10.0`**，尚未升级到最新
   .NET 版本的项目也可以直接引用。
 - **Avalonia Demo 跨平台、Native AOT 发布**：`samples/SevenZipLite.AvaloniaDemo` 用跨平台的
-  Avalonia UI 框架一套代码同时跑在 Windows（win-x64/win-x86）和 Linux（linux-x64）上，并以
-  Native AOT（`PublishAot=true`）方式发布为不依赖 .NET 运行时的原生可执行文件。
+  Avalonia UI 框架一套代码同时跑在 Windows（win-x64）和 Linux（linux-x64）上，并以
+  Native AOT（`PublishAot=true`）方式发布为不依赖 .NET 运行时的原生可执行文件
+  （不含 win-x86——.NET Native AOT 在 Windows 上只支持 x64/arm64，从未支持过 32 位）。
 
 ## 支持的平台与格式
 
@@ -137,9 +138,13 @@ SevenZipLite/
 - `SevenZipLite.AvaloniaDemo` 跨平台：在 Windows、Linux 上均可直接 `dotnet build`/`dotnet
   run`/`dotnet publish` 构建运行，普通 TFM 为 `net10.0`（不带 `-windows` 等平台后缀），不需要
   `EnableWindowsTargeting` 之类的无头编译技巧。该项目把 `PublishAot=true` 写死在 csproj 里，
-  因此任何 `dotnet publish -r <win-x64|win-x86|linux-x64>` 都会产出 Native AOT 原生可执行
+  因此 `dotnet publish -r <win-x64|linux-x64>` 都会产出 Native AOT 原生可执行
   文件，不依赖目标机器安装 .NET 运行时；但 Native AOT 的代码生成器不支持跨操作系统编译，
-  发布 win-x64/win-x86 必须在 Windows 上执行，发布 linux-x64 必须在 Linux 上执行。
+  发布 win-x64 必须在 Windows 上执行，发布 linux-x64 必须在 Linux 上执行。**不支持
+  win-x86**：.NET Native AOT 在 Windows 上只支持 x64/arm64，从未支持过 32 位，
+  `dotnet publish -r win-x86 -p:PublishAot=true` 会直接报
+  `NETSDK1203: Ahead-of-time compilation is not supported for the target runtime
+  identifier 'win-x86'.`，这是 .NET SDK 的硬限制，不是本项目配置问题。
 - `SevenZipLite.MauiDemo` 需要安装 .NET MAUI workload（`dotnet workload install maui`）及
   Android SDK/NDK。
 
@@ -164,8 +169,9 @@ dotnet run --project tests/SevenZipLite.Tests -c Release -- --stress
 # 普通 JIT 运行（开发调试用）
 dotnet run --project samples/SevenZipLite.AvaloniaDemo -c Release
 
-# Native AOT 发布（生成不依赖 .NET 运行时的原生可执行文件；win-x64/win-x86 必须在 Windows 上
-# 执行，linux-x64 必须在 Linux 上执行 —— Native AOT 的代码生成器不支持跨操作系统编译）
+# Native AOT 发布（生成不依赖 .NET 运行时的原生可执行文件；win-x64 必须在 Windows 上
+# 执行，linux-x64 必须在 Linux 上执行 —— Native AOT 的代码生成器不支持跨操作系统编译；
+# 不支持 win-x86，.NET Native AOT 在 Windows 上只支持 x64/arm64）
 dotnet publish samples/SevenZipLite.AvaloniaDemo -c Release -r linux-x64 --self-contained true
 ```
 
@@ -206,7 +212,7 @@ dotnet build samples/SevenZipLite.MauiDemo -f net10.0-android -c Debug -t:Run
 2. `dotnet restore` + `dotnet build -c Release` + `dotnet pack -c Release`。
 3. 输出 `SevenZipLite.Native.<版本号>.nupkg` 与对应的 `.snupkg`（符号包）到指定目录（默认 `./artifacts`）。
 
-不带参数运行则使用 `Directory.Build.props` 里的默认版本号 `0.1.0`。
+不带参数运行则使用 `Directory.Build.props` 里的默认版本号 `0.1.1`。
 
 ## 发布（GitHub Actions）
 
@@ -217,10 +223,11 @@ dotnet build samples/SevenZipLite.MauiDemo -f net10.0-android -c Debug -t:Run
 2. 在 Linux runner 上把 `tests/SevenZipLite.AotSmokeTest` 发布为 Native AOT 并运行，验证核心库
    `IsAotCompatible` 之后仍然真的能在 AOT 下跑通（而不只是编译期声明兼容）。
 3. 用 `scripts/pack-nuget.sh` 打出 `.nupkg`/`.snupkg`（版本号取自 tag）。
-4. 把 Avalonia Demo 以 Native AOT 方式发布为 win-x64、win-x86（Windows runner）与 linux-x64
-   （Ubuntu runner）三份原生可执行文件，分别打包为 zip。
+4. 把 Avalonia Demo 以 Native AOT 方式发布为 win-x64（Windows runner）与 linux-x64
+   （Ubuntu runner）两份原生可执行文件，分别打包为 zip（不含 win-x86——.NET Native AOT
+   在 Windows 上只支持 x64/arm64，从未支持过 32 位，强行发布会报 `NETSDK1203`）。
 5. 在 Ubuntu runner 上安装 MAUI workload，构建 Android APK（未签名 Release 或 Debug 配置）。
-6. 把上述所有产物（`.nupkg`、`.snupkg`、Avalonia Demo zip ×3、APK）作为附件创建一个 GitHub
+6. 把上述所有产物（`.nupkg`、`.snupkg`、Avalonia Demo zip ×2、APK）作为附件创建一个 GitHub
    Release。
 6. 可选的 nuget.org 推送步骤：**默认不执行**，只有在仓库 Secrets 里配置了 `NUGET_API_KEY`
    时才会启用（当前不需要，按用户要求保持关闭）。

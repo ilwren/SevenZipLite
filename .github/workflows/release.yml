@@ -7,7 +7,6 @@ name: Release
 # 产物 / Artifacts published to the GitHub Release:
 #   - SevenZipLite.Native.<version>.nupkg / .snupkg  (NuGet 包 / NuGet package)
 #   - SevenZipLite.AvaloniaDemo-win-x64.zip   (Native AOT，单文件原生可执行文件)
-#   - SevenZipLite.AvaloniaDemo-win-x86.zip   (Native AOT, single-file native executable)
 #   - SevenZipLite.AvaloniaDemo-linux-x64.zip (Native AOT, single-file native executable)
 #   - SevenZipLite.MauiDemo.apk           (未签名 / unsigned)
 #
@@ -135,34 +134,51 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------
-  # 5. 发布 Avalonia Demo（win-x64 / win-x86 / linux-x64，Native AOT）
-  #    / Publish the Avalonia demo (win-x64 / win-x86 / linux-x64, Native AOT).
+  # 5. 发布 Avalonia Demo（win-x64 / linux-x64，Native AOT）
+  #    / Publish the Avalonia demo (win-x64 / linux-x64, Native AOT).
   # ---------------------------------------------------------------------
   publish-avalonia:
+    # 只发布 win-x64 和 linux-x64 两个 RID，不含 win-x86——.NET Native AOT 从根上就不
+    # 支持 32 位 Windows（ilc 代码生成器只覆盖 Windows x64/arm64），`dotnet publish -r
+    # win-x86 -p:PublishAot=true` 会直接报 NETSDK1203 "Ahead-of-time compilation is not
+    # supported for the target runtime identifier 'win-x86'."，这是 .NET SDK 的硬限制，
+    # 不是本项目配置问题，也没有绕过办法；真实跑过一次 CI 才验证到这一点（本地沙箱没有
+    # Windows 环境，无法提前发现）。如果需要给 win-x86 用户提供本库的归档能力，应直接让
+    # 他们引用 NuGet 包 `SevenZipLite.Native`（支持 win-x86，只是不能以 Native AOT
+    # 方式发布可执行文件），而不是试图让这个 Demo 覆盖 win-x86。
+    #
+    # Only win-x64 and linux-x64 are published — not win-x86. .NET Native AOT
+    # fundamentally doesn't support 32-bit Windows (the ilc code generator only covers
+    # Windows x64/arm64); `dotnet publish -r win-x86 -p:PublishAot=true` fails outright
+    # with NETSDK1203 "Ahead-of-time compilation is not supported for the target runtime
+    # identifier 'win-x86'." This is a hard .NET SDK limitation, not a misconfiguration
+    # in this project, and there's no workaround — it only surfaced after an actual CI
+    # run (the local sandbox has no Windows environment to catch it ahead of time). If
+    # win-x86 users need this library's archive functionality, point them at the
+    # `SevenZipLite.Native` NuGet package directly (it does support win-x86, just not as
+    # a Native AOT-published executable) rather than trying to make this demo cover
+    # win-x86.
+    #
     # 每个 RID 配对到它原生对应的 Runner OS，而不是让某个 Runner 去跨平台发布别的 RID
-    # ——Native AOT 的代码生成器（ilc）不支持跨操作系统编译（只能跨架构，比如同为
-    # Windows 的 x64/x86），在 Linux 上发布 win-x64/win-x86、或在 Windows 上发布
-    # linux-x64 都会失败。三个 RID 天然对应两种 Runner OS，matrix 里按 RID 配好对应
-    # 的 os 即可，不需要额外的跨平台处理。
+    # ——Native AOT 的代码生成器（ilc）不支持跨操作系统编译，在 Linux 上发布 win-x64、
+    # 或在 Windows 上发布 linux-x64 都会失败。两个 RID 天然对应两种 Runner OS，matrix
+    # 里按 RID 配好对应的 os 即可，不需要额外的跨平台处理。
     #
     # Each RID is paired with its own native Runner OS rather than having one runner
     # cross-publish another RID — Native AOT's code generator (ilc) does not support
-    # cross-OS compilation (only cross-architecture on the same OS, e.g. Windows x64/
-    # x86); publishing win-x64/win-x86 on Linux, or linux-x64 on Windows, would fail.
-    # The three RIDs naturally map to two runner OSes, so the matrix just pairs each
+    # cross-OS compilation; publishing win-x64 on Linux, or linux-x64 on Windows, would
+    # fail. The two RIDs naturally map to two runner OSes, so the matrix just pairs each
     # RID with its OS — no extra cross-platform handling needed.
     runs-on: ${{ matrix.os }}
     needs: setup
     strategy:
-      # fail-fast: false —— 三个 RID 互相独立，一个失败不应该连带取消其它正在跑的 job。
-      # fail-fast: false — the three RIDs are independent; one failing shouldn't cancel
-      # the other still-running jobs.
+      # fail-fast: false —— 两个 RID 互相独立，一个失败不应该连带取消其它正在跑的 job。
+      # fail-fast: false — the two RIDs are independent; one failing shouldn't cancel
+      # the other still-running job.
       fail-fast: false
       matrix:
         include:
           - rid: win-x64
-            os: windows-latest
-          - rid: win-x86
             os: windows-latest
           - rid: linux-x64
             os: ubuntu-latest
@@ -175,16 +191,18 @@ jobs:
 
       # 这个 Avalonia 项目没有声明 <Platforms>/<PlatformTarget>（跟之前 WPF Demo 不
       # 一样），所以不会重现当年 win-x86 那个 "RuntimeIdentifier platform 'win-x86'
-      # and the PlatformTarget 'x64' must be compatible." 的 NETSDK1032 问题，这里
-      # 不需要再额外传 -p:PlatformTarget=... 兜底。PublishAot=true 已经写死在 csproj
-      # 里（不区分 Configuration），这里仍显式传一遍只是为了让这一步本身自解释。
+      # and the PlatformTarget 'x64' must be compatible." 的 NETSDK1032 问题（这是另一个
+      # 不同的、已经绕开的坑；本 job 不发布 win-x86 的原因是上面提到的 NETSDK1203，两者
+      # 不是同一个问题）。PublishAot=true 已经写死在 csproj 里（不区分 Configuration），
+      # 这里仍显式传一遍只是为了让这一步本身自解释。
       #
       # This Avalonia project declares no <Platforms>/<PlatformTarget> (unlike the old
       # WPF demo), so it can't reproduce the old win-x86 NETSDK1032 "RuntimeIdentifier
-      # platform 'win-x86' and the PlatformTarget 'x64' must be compatible." bug — no
-      # extra -p:PlatformTarget=... override is needed here. PublishAot=true is already
-      # hardcoded in the csproj (not conditioned on Configuration); it's still passed
-      # explicitly below purely so this step is self-documenting.
+      # platform 'win-x86' and the PlatformTarget 'x64' must be compatible." bug (that
+      # was a different, already-sidestepped issue; this job excludes win-x86 for the
+      # separate NETSDK1203 reason noted above). PublishAot=true is already hardcoded in
+      # the csproj (not conditioned on Configuration); it's still passed explicitly
+      # below purely so this step is self-documenting.
       - name: Publish Avalonia demo (${{ matrix.rid }}, Native AOT)
         run: >
           dotnet publish samples/SevenZipLite.AvaloniaDemo/SevenZipLite.AvaloniaDemo.csproj

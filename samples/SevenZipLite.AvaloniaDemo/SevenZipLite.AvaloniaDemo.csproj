@@ -7,7 +7,7 @@
       （选 net10.0 而非更低的 net8.0 的原因见下一段注释）。Avalonia 本身就是跨平台 UI
       框架，具体平台实现（Win32/X11/Wayland/macOS）由 Avalonia.Desktop 在运行时根据当前
       OS 自动选择，不需要也不应该把 TargetFramework 锁定成某个平台专属 TFM——这也是这次
-      把 WPF Demo 换成 Avalonia Demo 的收益之一：win-x64/win-x86/linux-x64 三个 RID 共用
+      把 WPF Demo 换成 Avalonia Demo 的收益之一：win-x64/linux-x64 两个 RID 共用
       同一份 TFM，不用再像 WPF 项目那样为了 PlatformTarget/RuntimeIdentifier 的兼容性写
       一堆条件判断（参见已删除的 SevenZipLite.WpfDemo.csproj 历史记录）。
 
@@ -17,8 +17,8 @@
       concrete platform backend (Win32/X11/Wayland/macOS) is selected by
       Avalonia.Desktop at runtime based on the current OS — there's no need (and no
       benefit) to pin TargetFramework to a platform-specific TFM. This is also one of
-      the payoffs of replacing the WPF demo with this Avalonia demo: win-x64/win-x86/
-      linux-x64 all share the exact same TFM, with no need for the PlatformTarget/
+      the payoffs of replacing the WPF demo with this Avalonia demo: win-x64/
+      linux-x64 share the exact same TFM, with no need for the PlatformTarget/
       RuntimeIdentifier compatibility conditionals the old WPF project needed (see the
       now-deleted SevenZipLite.WpfDemo.csproj's history).
 
@@ -103,6 +103,19 @@
       across configurations so code behavior doesn't silently diverge between Debug and
       Release. It only actually takes effect when publishing — `dotnet build`/`dotnet
       run` are unaffected, so everyday local development is unchanged.
+      注意：`PublishAot=true` 对所有 RID 一视同仁地打开，但 win-x86 用这个开关发布会直接
+      失败（`NETSDK1203: Ahead-of-time compilation is not supported for the target
+      runtime identifier 'win-x86'.`）——这是 .NET Native AOT 的硬限制（Windows 上只支持
+      x64/arm64，从未支持过 32 位），不是本项目能绕开的问题，所以本仓库的 CI
+      （`.github/workflows/release.yml` 的 `publish-avalonia` job）只对 win-x64 和
+      linux-x64 两个 RID 做发布，不含 win-x86。
+
+      Note: `PublishAot=true` applies uniformly to every RID, but publishing win-x86
+      with it fails outright (`NETSDK1203: Ahead-of-time compilation is not supported
+      for the target runtime identifier 'win-x86'.`) — this is a hard .NET Native AOT
+      limitation (Windows only ever supported x64/arm64, never 32-bit), not something
+      this project can work around, so this repo's CI (the `publish-avalonia` job in
+      `.github/workflows/release.yml`) only publishes win-x64 and linux-x64, not win-x86.
     -->
     <PublishAot>true</PublishAot>
   </PropertyGroup>
@@ -144,25 +157,42 @@
     原生库分发策略：跟旧 WPF Demo 的思路一致（复制到输出目录根，供
     [LibraryImport("7zlite")] 的默认探测规则找到），但选择依据从 PlatformTarget（WPF 只
     支持 Windows，靠 x86/x64 的 PlatformTarget 区分）换成了 RuntimeIdentifier（Avalonia
-    跨平台，发布时 -r win-x64/win-x86/linux-x64 才是真正决定"要哪份原生库"的依据）。
+    跨平台，发布时 -r <RID> 才是真正决定"要哪份原生库"的依据）。
     额外加一组"没有指定 RID 时按当前构建机器操作系统兜底"的判断，覆盖本地
     `dotnet run`/`dotnet build`（不带 -r）的日常开发场景——这组兜底判断等价于
     src/SevenZipLite/msbuild-targets/SevenZipLite.Native.targets 打进 NuGet 包里的那份，
     但这里是 ProjectReference 不是 PackageReference，那份包内 targets 不会自动生效，
     所以在本项目里单独复刻一份同样的兜底逻辑。
 
+    下面覆盖了 win-x64/win-x86/win-arm64/linux-x64 四个 RID 分支，但本项目**正式支持并
+    会被 CI 以 Native AOT 发布**的只有 win-x64 和 linux-x64——win-x86 分支只是为了让
+    `dotnet run -r win-x86` / `dotnet build -r win-x86`（普通 JIT，不触发 PublishAot）
+    这类本地调试场景也能顺手找到原生库，并不代表 win-x86 是一个受支持的 Native AOT 发布
+    目标（.NET Native AOT 在 Windows 上只支持 x64/arm64，发布 win-x86 会直接报
+    NETSDK1203，见上面 PublishAot 属性旁边的注释）；win-arm64 分支同理是预留，见
+    native-libs/win-arm64/README.md 的说明。
+
     Native binary distribution strategy mirrors the old WPF demo (copy to the output
     root so [LibraryImport("7zlite")]'s default probing finds it), but the selection
     key changes from PlatformTarget (WPF is Windows-only, distinguishing x86/x64 via
     PlatformTarget) to RuntimeIdentifier (Avalonia is cross-platform; publishing with
-    -r win-x64/win-x86/linux-x64 is what actually decides which native binary is
-    needed). An extra "fall back to the current build machine's OS when no RID is
-    specified" branch covers everyday local `dotnet run`/`dotnet build` (without -r) —
-    equivalent to what src/SevenZipLite/msbuild-targets/SevenZipLite.Native.targets
-    does when packed into the NuGet package, but since this project uses a
-    ProjectReference rather than a PackageReference, that packed-in targets file
-    doesn't automatically apply here, so the same fallback logic is reproduced locally
-    in this project instead.
+    -r <RID> is what actually decides which native binary is needed). An extra "fall
+    back to the current build machine's OS when no RID is specified" branch covers
+    everyday local `dotnet run`/`dotnet build` (without -r) — equivalent to what
+    src/SevenZipLite/msbuild-targets/SevenZipLite.Native.targets does when packed into
+    the NuGet package, but since this project uses a ProjectReference rather than a
+    PackageReference, that packed-in targets file doesn't automatically apply here, so
+    the same fallback logic is reproduced locally in this project instead.
+
+    The branches below cover win-x64/win-x86/win-arm64/linux-x64, but only win-x64 and
+    linux-x64 are **officially supported and published as Native AOT by CI** — the
+    win-x86 branch exists purely so local debugging scenarios like `dotnet run -r
+    win-x86` / `dotnet build -r win-x86` (plain JIT, which doesn't trigger PublishAot)
+    can still find the native library; it doesn't mean win-x86 is a supported Native
+    AOT publish target (.NET Native AOT on Windows only supports x64/arm64 — publishing
+    win-x86 fails outright with NETSDK1203, see the comment next to the PublishAot
+    property above). The win-arm64 branch is likewise just a reservation for the
+    future; see native-libs/win-arm64/README.md.
   -->
   <PropertyGroup>
     <_AvaloniaDemoNativeRid Condition="'$(_AvaloniaDemoNativeRid)' == '' And '$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_AvaloniaDemoNativeRid>

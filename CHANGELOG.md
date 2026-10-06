@@ -4,13 +4,19 @@
 
 ## [Unreleased]
 
+（暂无）/ (nothing yet)
+
+## [0.1.1] - 2026-10-06
+
 ### 变更 / Changed
 - **用跨平台的 Avalonia Demo 替换了 WPF Demo**：`samples/SevenZipLite.WpfDemo` 已删除，
   新增 `samples/SevenZipLite.AvaloniaDemo`，功能上与旧 WPF Demo 完全对等（内置自检、手动
   压缩/解压、大文件吞吐量测试、多线程压力测试四大板块），但改用跨平台的 Avalonia UI 框架，
   同一套代码可在 Windows 和 Linux 上运行，并以 Native AOT（`PublishAot=true`）方式发布为
-  win-x64、win-x86、linux-x64 三个 RID 的原生可执行文件（不依赖目标机器安装 .NET 运行时）。
-  CI 发布流程中的 `publish-wpf` job 相应替换为 `publish-avalonia`（三个 RID 各自在匹配的
+  win-x64、linux-x64 两个 RID 的原生可执行文件（不依赖目标机器安装 .NET 运行时；不含
+  win-x86——.NET Native AOT 在 Windows 上只支持 x64/arm64，从未支持过 32 位，这是在真实
+  CI 上跑出 `NETSDK1203` 之后才确认的 .NET SDK 硬限制，无法绕过）。
+  CI 发布流程中的 `publish-wpf` job 相应替换为 `publish-avalonia`（两个 RID 各自在匹配的
   操作系统 runner 上发布，因为 Native AOT 不支持跨操作系统编译）。
   **Replaced the WPF demo with a cross-platform Avalonia demo**: `samples/
   SevenZipLite.WpfDemo` has been removed and `samples/SevenZipLite.AvaloniaDemo` added in
@@ -18,7 +24,10 @@
   pack/extract, large-file throughput test, and multi-thread stress test) but built on the
   cross-platform Avalonia UI framework — the same codebase runs on both Windows and Linux,
   and is published with Native AOT (`PublishAot=true`) as native executables for the
-  win-x64, win-x86, and linux-x64 RIDs (no .NET runtime required on the target machine).
+  win-x64 and linux-x64 RIDs (no .NET runtime required on the target machine; win-x86 is
+  excluded — .NET Native AOT on Windows only ever supported x64/arm64, never 32-bit, a
+  hard .NET SDK limitation confirmed by an actual `NETSDK1203` failure on real CI, with no
+  workaround).
   The CI release pipeline's `publish-wpf` job was replaced with `publish-avalonia`
   accordingly (each RID publishes on its matching OS runner, since Native AOT doesn't
   support cross-OS compilation).

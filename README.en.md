@@ -51,9 +51,10 @@ official 7-Zip command-line tools.
   **`net10.0`**, so projects that haven't upgraded to the latest .NET yet can reference it
   directly.
 - **Avalonia demo is cross-platform and Native AOT-published**: `samples/SevenZipLite.
-  AvaloniaDemo` runs the same codebase on both Windows (win-x64/win-x86) and Linux
+  AvaloniaDemo` runs the same codebase on both Windows (win-x64) and Linux
   (linux-x64) via the cross-platform Avalonia UI framework, and is published with Native
-  AOT (`PublishAot=true`) as a native executable that doesn't require the .NET runtime.
+  AOT (`PublishAot=true`) as a native executable that doesn't require the .NET runtime
+  (win-x86 is not supported — .NET Native AOT on Windows only ever supported x64/arm64).
 
 ## Supported platforms and formats
 
@@ -150,10 +151,14 @@ SevenZipLite/
   `dotnet build`/`dotnet run`/`dotnet publish` on both Windows and Linux, targeting plain
   `net10.0` (no `-windows` or other OS-specific TFM suffix) — no `EnableWindowsTargeting`
   headless-compile trick needed. The project hardcodes `PublishAot=true` in its csproj, so
-  any `dotnet publish -r <win-x64|win-x86|linux-x64>` produces a Native AOT native
+  `dotnet publish -r <win-x64|linux-x64>` produces a Native AOT native
   executable that doesn't require the target machine to have the .NET runtime installed;
-  however, Native AOT's code generator doesn't support cross-OS compilation, so win-x64/
-  win-x86 publishes must run on Windows and linux-x64 publishes must run on Linux.
+  however, Native AOT's code generator doesn't support cross-OS compilation, so win-x64
+  publishes must run on Windows and linux-x64 publishes must run on Linux. **win-x86 is
+  not supported**: .NET Native AOT on Windows only ever supported x64/arm64, never
+  32-bit, so `dotnet publish -r win-x86 -p:PublishAot=true` fails outright with
+  `NETSDK1203: Ahead-of-time compilation is not supported for the target runtime
+  identifier 'win-x86'.` — a hard .NET SDK limitation, not a misconfiguration here.
 - `SevenZipLite.MauiDemo` requires the .NET MAUI workload
   (`dotnet workload install maui`) and the Android SDK/NDK.
 
@@ -179,8 +184,9 @@ dotnet run --project tests/SevenZipLite.Tests -c Release -- --stress
 dotnet run --project samples/SevenZipLite.AvaloniaDemo -c Release
 
 # Native AOT publish (produces a native executable that doesn't require the .NET runtime;
-# win-x64/win-x86 must be run on Windows, linux-x64 must be run on Linux — Native AOT's
-# code generator doesn't support cross-OS compilation)
+# win-x64 must be run on Windows, linux-x64 must be run on Linux — Native AOT's code
+# generator doesn't support cross-OS compilation; win-x86 isn't supported since .NET
+# Native AOT on Windows only ever supported x64/arm64)
 dotnet publish samples/SevenZipLite.AvaloniaDemo -c Release -r linux-x64 --self-contained true
 ```
 
@@ -228,7 +234,7 @@ The script:
 3. Writes `SevenZipLite.Native.<version>.nupkg` and its matching `.snupkg` (symbols package) to
    the given output directory (default `./artifacts`).
 
-Running it with no arguments uses the default version `0.1.0` from `Directory.Build.props`.
+Running it with no arguments uses the default version `0.1.1` from `Directory.Build.props`.
 
 ## Releasing (GitHub Actions)
 
@@ -241,11 +247,13 @@ a `v*`-style tag (e.g. `v1.0.0`) is pushed, and runs:
    verify the core library's `IsAotCompatible` claim actually works under AOT (not just
    compiles).
 3. Packs `.nupkg`/`.snupkg` with `scripts/pack-nuget.sh` (version taken from the tag).
-4. Publishes the Avalonia demo as Native AOT for win-x64, win-x86 (on a Windows runner) and
-   linux-x64 (on an Ubuntu runner) — three native executables, each zipped as an artifact.
+4. Publishes the Avalonia demo as Native AOT for win-x64 (on a Windows runner) and
+   linux-x64 (on an Ubuntu runner) — two native executables, each zipped as an artifact.
+   (win-x86 is excluded: .NET Native AOT on Windows only ever supported x64/arm64, so
+   publishing win-x86 fails outright with `NETSDK1203`.)
 5. Installs the MAUI workload on an Ubuntu runner and builds an Android APK (unsigned Release
    or Debug configuration).
-6. Attaches all of the above artifacts (`.nupkg`, `.snupkg`, 3× Avalonia demo zips, APK) to a
+6. Attaches all of the above artifacts (`.nupkg`, `.snupkg`, 2× Avalonia demo zips, APK) to a
    newly created
    GitHub Release.
 6. An optional nuget.org push step: **disabled by default**, only runs if `NUGET_API_KEY` is

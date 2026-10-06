@@ -1,14 +1,14 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="SevenZipLite.AvaloniaDemo.MainWindow"
-        Title="SevenZipLite Avalonia 演示 (win-x64 / win-x86 / linux-x64, Native AOT)"
+        Title="SevenZipLite Avalonia 演示 (win-x64 / linux-x64, Native AOT)"
         Height="800" Width="920" MinHeight="600" MinWidth="700">
     <ScrollViewer>
         <StackPanel Margin="16">
 
             <TextBlock Name="HeaderLabel" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"
                        TextWrapping="Wrap" />
-            <TextBlock Text="本项目用于验证裁剪版 7-Zip 原生库（7zlite.dll / lib7zlite.so）+ 纯 C# P/Invoke 封装（SevenZipLite 类库）在 win-x64 / win-x86 / linux-x64 上以 Native AOT 方式发布后是否可用，覆盖 7z / zip / tar / tar.gz 四种格式及其分卷、7z/zip 密码。与之前的 WPF 版本相比，本 Demo 换成了跨平台的 Avalonia UI 框架，并以 Native AOT（PublishAot=true）方式发布——不依赖 .NET 运行时的原生可执行文件。"
+            <TextBlock Text="本项目用于验证裁剪版 7-Zip 原生库（7zlite.dll / lib7zlite.so）+ 纯 C# P/Invoke 封装（SevenZipLite 类库）在 win-x64 / linux-x64 上以 Native AOT 方式发布后是否可用（win-x86 不受支持——.NET Native AOT 在 Windows 上只支持 x64/arm64），覆盖 7z / zip / tar / tar.gz 四种格式及其分卷、7z/zip 密码。与之前的 WPF 版本相比，本 Demo 换成了跨平台的 Avalonia UI 框架，并以 Native AOT（PublishAot=true）方式发布——不依赖 .NET 运行时的原生可执行文件。"
                        TextWrapping="Wrap" Foreground="Gray" Margin="0,0,0,16" />
 
             <!-- ===================== 区块一：内置往返自检 ===================== -->
