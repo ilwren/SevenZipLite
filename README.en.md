@@ -1,4 +1,4 @@
-# SevenZipLite
+﻿# SevenZipLite
 
 [![License: LGPL v2.1+](https://img.shields.io/badge/license-LGPL--2.1--or--later-blue.svg)](./LICENSE)
 [![NuGet](https://img.shields.io/badge/nuget-SevenZipLite.Native-blue)](https://www.nuget.org/packages/SevenZipLite.Native)
@@ -102,11 +102,6 @@ SevenZipArchive.ExtractAll(@"C:\out\backup.7z", ArchiveFormat.SevenZip, @"C:\res
 For the full API (multi-volume archives, passwords, zip method selection, threading, exception
 handling, native library loading details) see the
 [**API documentation**](./docs/api/SevenZipLite.en.md) ([中文](./docs/api/SevenZipLite.md)).
-
-> ⚠️ The NuGet package has not been published to nuget.org yet (see the "Releasing" section
-> below for the publishing plan). In the meantime, pack it locally with
-> [`scripts/pack-nuget.sh`](./scripts/pack-nuget.sh) and test against a local feed, or just add
-> a `ProjectReference` to this repo's `src/SevenZipLite/SevenZipLite.csproj`.
 
 ## Project structure
 

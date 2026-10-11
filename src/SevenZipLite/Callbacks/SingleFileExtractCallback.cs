@@ -12,21 +12,43 @@ namespace SevenZipLite.Callbacks;
 internal sealed partial class SingleFileExtractCallback : IArchiveExtractCallback, IDisposable
 {
     private readonly string _outputPath;
+    private readonly IProgress<SevenZipProgress>? _progress;
+    private readonly CancellationToken _cancellationToken;
     private ComOutStream? _currentAdapter;
+    private ulong _total;
 
-    public SingleFileExtractCallback(string outputPath)
+    public SingleFileExtractCallback(string outputPath, IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         _outputPath = outputPath;
+        _progress = progress;
+        _cancellationToken = cancellationToken;
     }
 
-    public int SetTotal(ulong total) => HResult.S_OK;
-    public int SetCompleted(nint completeValue) => HResult.S_OK;
+    private int AbortIfCancelled() => _cancellationToken.IsCancellationRequested ? HResult.E_ABORT : HResult.S_OK;
+
+    public int SetTotal(ulong total)
+    {
+        _total = total;
+        _progress?.Report(new SevenZipProgress(0, total));
+        return AbortIfCancelled();
+    }
+
+    public int SetCompleted(nint completeValue)
+    {
+        // completeValue 是 const UInt64*，必须解引用，不能直接把指针地址当数值用，详见
+        // NativePtr 类型注释。
+        ulong completed = NativePtr.ReadUInt64OrDefault(completeValue);
+        _progress?.Report(new SevenZipProgress(completed, _total));
+        return AbortIfCancelled();
+    }
 
     public int GetStream(uint index, out nint outStream, int askExtractMode)
     {
         outStream = 0;
         _currentAdapter?.Dispose();
         _currentAdapter = null;
+        if (_cancellationToken.IsCancellationRequested) return HResult.E_ABORT;
 
         if (askExtractMode != AskMode.kExtract) return HResult.S_OK;
 

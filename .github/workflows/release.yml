@@ -5,14 +5,39 @@ name: Release
 #   Runs automatically when a tag matching v1.2.3 / v1.2.3-rc.1 is pushed.
 #
 # 产物 / Artifacts published to the GitHub Release:
-#   - SevenZipLite.Native.<version>.nupkg / .snupkg  (NuGet 包 / NuGet package)
+#   - SevenZipLite.Native.<version>.nupkg (NuGet 包 / NuGet package)
 #   - SevenZipLite.AvaloniaDemo-win-x64.zip   (Native AOT，单文件原生可执行文件)
 #   - SevenZipLite.AvaloniaDemo-linux-x64.zip (Native AOT, single-file native executable)
 #   - SevenZipLite.MauiDemo.apk           (未签名 / unsigned)
+#   注意：.snupkg（符号包）不会附加到 GitHub Release——它只在 publish-nuget-org job 里
+#   随 .nupkg 一起推送到 nuget.org 的符号服务器，不是终端用户下载的产物。
+#   Note: .snupkg (symbol package) is NOT attached to the GitHub Release — it's only
+#   pushed to nuget.org's symbol server alongside the .nupkg in the publish-nuget-org
+#   job; it isn't an end-user-facing download.
+#
+# 每次发布都保证是一个全新的 GitHub Release / Every release is guaranteed to be fresh:
+#   create-release job 在创建 Release 前会先删除同一个 tag 下任何已存在的旧 Release
+#   （只删 Release 本身，不动 tag），因此不会出现"复用旧 Release、只改标题/追加文件"
+#   的情况（这是 softprops/action-gh-release 对同一 tag_name 的默认"创建或更新"语义）。
+#   The create-release job deletes any pre-existing Release for the same tag before
+#   creating a new one (only the Release object, not the tag), so it never ends up
+#   reusing an old Release and just editing its title / appending files to it (which is
+#   softprops/action-gh-release's default "create-or-update" behavior for a given
+#   tag_name).
 #
 # nuget.org 发布 / nuget.org publish:
-#   默认关闭。只有当仓库 Secrets 里配置了 NUGET_API_KEY 时才会执行推送。
-#   Disabled by default. Only runs if NUGET_API_KEY is configured in repo Secrets.
+#   自动按每个 tag 触发（见 publish-nuget-org job），走 nuget.org 推荐的 Trusted
+#   Publishing（OIDC 换取 1 小时有效的临时 API Key，不使用长期有效的 API Key secret）。
+#   只有当仓库 Secrets 里配置了 NUGET_USERNAME 时才会真正推送；没配置时该 job 会正常
+#   跳过（不报错，GitHub Release 仍会照常发布），并在 Job Summary 里写明跳过原因和
+#   配置方法。
+#   Automatically triggered on every tag (see the publish-nuget-org job), using
+#   nuget.org's recommended Trusted Publishing (OIDC exchanged for a 1-hour-lived
+#   temporary API key — no long-lived API key secret involved). Only actually pushes
+#   when the NUGET_USERNAME secret is configured in the repo; when it isn't, the job
+#   cleanly skips (no failure, the GitHub Release still gets published), and the Job
+#   Summary records why it was skipped and how to configure it.
+
 
 on:
   push:
@@ -62,7 +87,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Run self-test (13 correctness cases)
+      - name: "Run self-test (21 correctness cases: format/split/password matrix + async/progress/cancellation)"
         run: dotnet run --project tests/SevenZipLite.Tests -c Release
 
       - name: Run multi-threading stress test
@@ -288,9 +313,52 @@ jobs:
       - name: Flatten downloaded artifacts
         run: |
           mkdir -p release-assets
-          find downloaded -type f \( -name "*.nupkg" -o -name "*.snupkg" -o -name "*.zip" -o -name "*.apk" \) \
+          # 注意：.snupkg（符号包）不放进 GitHub Release 附件——它是给符号服务器用的
+          # 调试符号包（配合 `dotnet nuget push` 推送 .nupkg 时会自动一并推送同目录下的
+          # .snupkg 到 nuget.org 的符号服务器，见下面 publish-nuget-org job），不是给
+          # 终端用户下载的产物，放进 Release 里只会造成困惑/占地方。
+          # Note: .snupkg (symbol package) is intentionally NOT attached to the GitHub
+          # Release — it's a debug-symbol package meant for a symbol server (when
+          # `dotnet nuget push` pushes the .nupkg, it automatically also pushes the
+          # matching .snupkg in the same directory to nuget.org's symbol server, see the
+          # publish-nuget-org job below). It's not an end-user-facing artifact, so
+          # attaching it to the Release would just be confusing clutter.
+          find downloaded -type f \( -name "*.nupkg" -o -name "*.zip" -o -name "*.apk" \) \
             -exec cp {} release-assets/ \;
           ls -la release-assets
+
+      - name: Delete pre-existing release for this tag (if any)
+        # softprops/action-gh-release 对同一个 tag_name 是"创建或更新"语义：如果这个
+        # tag 已经有一个 Release 了（比如之前手动跑过一次、或者重新 dispatch 了同一个
+        # 版本号重跑整个 workflow），它不会创建一个全新的 Release，而是复用旧的那个，
+        # 只更新 name/body，并把这次的新文件追加进旧 Release 原有的附件列表——不会清掉
+        # 上次遗留的文件，导致看起来像是"每次发布都在已有 Release 基础上改标题、加文件"
+        # 而不是真正的全新发布。这里显式地先把同 tag 的旧 Release（如果存在）删掉，
+        # 只删 Release 本身，不加 --cleanup-tag，不动 tag，这样下一步
+        # action-gh-release 面对的永远是"这个 tag 还没有 Release"的干净状态，必然创建
+        # 一个全新的 Release，而不是误改旧的。找不到旧 Release 时 `gh release delete`
+        # 会以非零退出码失败，用 `|| true` 吞掉即可（首次发布某个 tag 时本来就不存在
+        # 旧 Release，这是正常情况，不是错误）。
+        #
+        # softprops/action-gh-release has "create-or-update" semantics keyed on
+        # tag_name: if a Release already exists for this tag (e.g. a previous manual
+        # run, or re-dispatching the same version to re-run the whole workflow), it
+        # does NOT create a brand-new Release — it reuses the old one, only updating
+        # name/body, and appends this run's files onto the old Release's existing asset
+        # list without clearing anything left over from last time. That's exactly why
+        # it can look like "every publish just edits the title and adds files to an
+        # existing Release" instead of being a genuinely fresh release. This step
+        # explicitly deletes any pre-existing Release for the same tag first (deleting
+        # only the Release object, not the tag itself — no --cleanup-tag — so the tag
+        # stays untouched), guaranteeing the next step always sees a clean "no Release
+        # for this tag yet" state and therefore always creates a truly new Release
+        # instead of silently mutating an old one. `gh release delete` exits non-zero
+        # when there's nothing to delete, which is swallowed with `|| true` (there's
+        # naturally no pre-existing Release the first time a given tag is published —
+        # that's expected, not an error).
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete "${{ github.ref_name }}" --yes --repo "${{ github.repository }}" || true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -303,11 +371,60 @@ jobs:
           prerelease: ${{ contains(needs.setup.outputs.version, '-') }}
 
   # ---------------------------------------------------------------------
-  # 8.（可选，默认不执行）推送到 nuget.org。
-  #    (Optional, off by default) Push to nuget.org.
-  #    只有仓库 Secrets 中配置了 NUGET_API_KEY 才会运行；用户当前未要求启用此步骤。
-  #    Only runs if NUGET_API_KEY is configured in repo Secrets; not requested to be
-  #    enabled right now by the maintainer.
+
+  # 8. 推送到 nuget.org（Trusted Publishing / OIDC，不用长期有效的 API Key）
+  #    Push to nuget.org (Trusted Publishing / OIDC, no long-lived API key).
+  #
+  #    nuget.org 官方已经明确不建议自动化发布继续用 API Key（哪怕是 glob-pattern 限定、
+  #    有过期时间的那种），推荐改用 Trusted Publishing：工作流运行时用 GitHub 签发的
+  #    OIDC token 去 nuget.org 换一个只活 1 小时的临时 API Key，没有长期凭据可以被偷/
+  #    泄露，也不用手动轮换。这里用的就是 nuget.org 官方的 `NuGet/login@v1` action 做
+  #    这个换取过程。
+  #    nuget.org officially discourages using API keys for automated publishing (even
+  #    scoped/short-lived ones) and recommends Trusted Publishing instead: the workflow
+  #    run exchanges a GitHub-issued OIDC token for a temporary nuget.org API key that
+  #    only lives for 1 hour — no long-lived credential to leak or rotate. This job uses
+  #    nuget.org's own `NuGet/login@v1` action to do that exchange.
+  #
+  #    只有仓库 Secrets 中配置了 NUGET_USERNAME（你的 nuget.org 用户名，不是邮箱）才会
+  #    真正执行推送；没配置时这个 job 仍会运行，但会在 Job Summary 里明确提示"跳过"，
+  #    而不是报错——这样还没配置好 Trusted Publishing 的仓库也能正常走完整个 Release
+  #    流程，不会卡住。
+  #    Only actually pushes when the NUGET_USERNAME secret (your nuget.org username, not
+  #    email) is configured in the repo. When it isn't, this job still runs but clearly
+  #    summarizes that it was skipped instead of failing — so a repo that hasn't set up
+  #    Trusted Publishing yet can still complete the whole Release flow without getting
+  #    stuck.
+  #
+  #    如何启用 / How to enable:
+  #      1. 登录 nuget.org -> 右上角用户名 -> Trusted Publishing -> Add / Create，
+  #         填写（大小写不敏感）：
+  #         Sign in to nuget.org -> username menu -> Trusted Publishing -> Add / Create,
+  #         fill in (case-insensitive):
+  #           - Repository Owner: 你的 GitHub 用户名或组织名 / your GitHub username or org
+  #           - Repository: 本仓库名（如 SevenZipLite）/ this repo's name (e.g. SevenZipLite)
+  #           - Workflow File: release.yml（只填文件名，不带 .github/workflows/ 路径）
+  #             release.yml (file name only, not the .github/workflows/ path)
+  #           - Environment: 留空（本 job 没有用 GitHub Environments）
+  #             leave empty (this job doesn't use a GitHub Environment)
+  #      2. 仓库 Settings -> Secrets and variables -> Actions -> New repository
+  #         secret，名字必须是 `NUGET_USERNAME`，值填你的 nuget.org 用户名（是个人资料
+  #         页显示的那个用户名/个人或组织账号名，不是登录邮箱）。这个值本身不是什么
+  #         敏感凭据，用 secret 存只是避免在 workflow 文件里明文写用户名、方便以后改。
+  #         Repo Settings -> Secrets and variables -> Actions -> New repository secret,
+  #         name it exactly `NUGET_USERNAME`, value is your nuget.org username (the one
+  #         shown on your profile page, not your login email). The value itself isn't a
+  #         sensitive credential — storing it as a secret just avoids hardcoding it in
+  #         the workflow file and makes it easy to change later.
+  #      3. 配置好之后无需改动这个 workflow 文件，下一次打 tag 触发 Release 时就会自动
+  #         用 OIDC 换临时 Key 并推送；之前已经发布过、没配置好 Trusted Publishing 的
+  #         那些 tag 不会被补推。如果之前配置过旧的 NUGET_API_KEY secret，现在可以从
+  #         仓库 Secrets 里删掉了（已经不再被这个 workflow 使用）。
+  #         No workflow changes needed after that — the next tag-triggered Release will
+  #         automatically exchange for a temp key via OIDC and push. Tags already
+  #         released before Trusted Publishing was configured are not retroactively
+  #         pushed. If you previously configured the old NUGET_API_KEY secret, you can
+  #         delete it from the repo now — this workflow no longer uses it.
   #
   #    注意：job 级（以及 step 级）的 `if:` 条件不允许直接引用 `secrets` 上下文
   #    （GitHub Actions 会在工作流校验阶段报错 "Unrecognized named-value: 'secrets'"，
@@ -327,38 +444,81 @@ jobs:
   # ---------------------------------------------------------------------
   publish-nuget-org:
     runs-on: ubuntu-latest
-    needs: [pack-nuget, create-release]
+    needs: [setup, pack-nuget, create-release]
+    permissions:
+      # Trusted Publishing 必需：让 GitHub 给这个 job 签发 OIDC token，NuGet/login
+      # 用它去 nuget.org 换临时 API Key。这个 job 不需要 checkout 仓库内容，所以不用
+      # 额外加 contents 权限。
+      # Required for Trusted Publishing: lets GitHub issue an OIDC token for this job,
+      # which NuGet/login exchanges for a temporary nuget.org API key. This job doesn't
+      # checkout repo content, so no extra `contents` permission is needed.
+      id-token: write
     steps:
-      - name: Check whether NUGET_API_KEY is configured
+      - name: Check whether NUGET_USERNAME is configured
         id: check
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_USERNAME: ${{ secrets.NUGET_USERNAME }}
         run: |
-          if [ -n "$NUGET_API_KEY" ]; then
-            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          if [ -n "$NUGET_USERNAME" ]; then
+            echo "has_user=true" >> "$GITHUB_OUTPUT"
           else
-            echo "has_key=false" >> "$GITHUB_OUTPUT"
-            echo "NUGET_API_KEY secret 未配置，跳过 nuget.org 推送 / NUGET_API_KEY secret not set, skipping nuget.org push"
+            echo "has_user=false" >> "$GITHUB_OUTPUT"
+            echo "NUGET_USERNAME secret 未配置，跳过 nuget.org 推送 / NUGET_USERNAME secret not set, skipping nuget.org push"
           fi
 
       - uses: actions/download-artifact@v4
-        if: steps.check.outputs.has_key == 'true'
+        if: steps.check.outputs.has_user == 'true'
         with:
           name: nuget-package
           path: artifacts
 
       - uses: actions/setup-dotnet@v4
-        if: steps.check.outputs.has_key == 'true'
+        if: steps.check.outputs.has_user == 'true'
         with:
           dotnet-version: "10.0.x"
 
+      - name: NuGet login (OIDC -> temp API key)
+        if: steps.check.outputs.has_user == 'true'
+        uses: NuGet/login@v1
+        id: nuget_login
+        with:
+          user: ${{ secrets.NUGET_USERNAME }}
+
       - name: Push to nuget.org
-        if: steps.check.outputs.has_key == 'true'
+        if: steps.check.outputs.has_user == 'true'
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          TEMP_NUGET_API_KEY: ${{ steps.nuget_login.outputs.NUGET_API_KEY }}
         run: |
           dotnet nuget push "artifacts/*.nupkg" \
-            --api-key "$NUGET_API_KEY" \
+            --api-key "$TEMP_NUGET_API_KEY" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
 
+      - name: Job summary
+        if: always()
+        run: |
+          if [ "${{ steps.check.outputs.has_user }}" = "true" ]; then
+            {
+              echo "### 📦 nuget.org 推送 / nuget.org push";
+              echo "";
+              echo "已通过 Trusted Publishing（OIDC，无长期 API Key）推送 \`SevenZipLite.Native\`"
+              echo "版本 \`${{ needs.setup.outputs.version }}\` 到 nuget.org（含配套的 .snupkg 符号包）。";
+              echo "";
+              echo "Pushed \`SevenZipLite.Native\` version \`${{ needs.setup.outputs.version }}\` to";
+              echo "nuget.org via Trusted Publishing (OIDC, no long-lived API key), along with its";
+              echo "matching .snupkg symbol package.";
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### ⏭️ nuget.org 推送已跳过 / nuget.org push skipped";
+              echo "";
+              echo "仓库 Secrets 未配置 \`NUGET_USERNAME\`（Trusted Publishing 所需），本次只";
+              echo "发布了 GitHub Release，没有推送到 nuget.org。配置方法见 release.yml 里";
+              echo "publish-nuget-org job 的注释。";
+              echo "";
+              echo "Repo secret \`NUGET_USERNAME\` (required for Trusted Publishing) is not";
+              echo "configured, so only the GitHub Release was published this time — nothing";
+              echo "was pushed to nuget.org. See the comment on the publish-nuget-org job in";
+              echo "release.yml for setup steps.";
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

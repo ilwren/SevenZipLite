@@ -58,16 +58,54 @@ internal sealed partial class UpdateCallback : IArchiveUpdateCallback, ICryptoGe
 {
     private readonly IReadOnlyList<UpdateSourceItem> _items;
     private readonly string? _password;
+    private readonly IProgress<SevenZipProgress>? _progress;
+    private readonly CancellationToken _cancellationToken;
     private readonly ConcurrentBag<ComInStream> _pendingStreams = new();
+    private ulong _total;
 
-    public UpdateCallback(IReadOnlyList<UpdateSourceItem> items, string? password)
+    public UpdateCallback(IReadOnlyList<UpdateSourceItem> items, string? password,
+        IProgress<SevenZipProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         _items = items;
         _password = password;
+        _progress = progress;
+        _cancellationToken = cancellationToken;
     }
 
-    public int SetTotal(ulong total) => HResult.S_OK;
-    public int SetCompleted(nint completeValue) => HResult.S_OK;
+    // 取消的实现方式：native 7-Zip 把 IProgress::SetTotal/SetCompleted（以及下面
+    // GetStream）的返回值当成"调用方是否还想继续"的信号——只要这里返回非 S_OK（约定用
+    // E_ABORT），native 端的 Update2/Update2St 分发循环就会提前中止当前 UpdateItems
+    // 调用并把这个 HRESULT 一路向上传播，而不是继续处理剩下的条目。粒度是"条目之间"，
+    // 不是"字节级"：一旦某个条目已经开始被压缩（已经进了 native 的编码器），这次取消请求
+    // 要等这个条目处理完、下一次回调被调用时才会生效，无法从编码器内部中途打断。
+    // Cancellation: native 7-Zip treats the return value of IProgress::SetTotal/
+    // SetCompleted (and GetStream below) as a "should I keep going?" signal — returning
+    // anything other than S_OK (E_ABORT by convention) makes the native Update2/
+    // Update2St dispatch loop abort the current UpdateItems call early and propagate
+    // that HRESULT up, instead of processing the remaining items. Granularity is
+    // "between items", not byte-level: once an item has already started being
+    // compressed (already inside the native encoder), the cancellation request only
+    // takes effect the next time a callback is invoked (after that item finishes) — it
+    // can't interrupt mid-encode from inside the encoder.
+    private int AbortIfCancelled() => _cancellationToken.IsCancellationRequested ? HResult.E_ABORT : HResult.S_OK;
+
+    public int SetTotal(ulong total)
+    {
+        _total = total;
+        _progress?.Report(new SevenZipProgress(0, total));
+        return AbortIfCancelled();
+    }
+
+    public int SetCompleted(nint completeValue)
+    {
+        // completeValue 是 const UInt64*，不是按值传递的 UInt64，必须解引用，不能直接把
+        // 指针地址当数值用（踩过的真实 bug，详见 NativePtr 类型注释）。NULL 按"沿用上次
+        // 汇报的已完成量"处理（这里没有保留"上次值"，退化成 0，可接受——NULL 在实践中
+        // 极少出现，且下一次非 NULL 的 SetCompleted 很快就会把进度纠正回来）。
+        ulong completed = NativePtr.ReadUInt64OrDefault(completeValue);
+        _progress?.Report(new SevenZipProgress(completed, _total));
+        return AbortIfCancelled();
+    }
 
     public int GetUpdateItemInfo(uint index, out int newData, out int newProps, out uint indexInArchive)
     {
@@ -119,6 +157,7 @@ internal sealed partial class UpdateCallback : IArchiveUpdateCallback, ICryptoGe
     public int GetStream(uint index, out nint inStream)
     {
         inStream = 0;
+        if (_cancellationToken.IsCancellationRequested) return HResult.E_ABORT;
 
         var item = _items[(int)index];
         if (item.IsDir || item.DiskPath is null) return HResult.S_OK;

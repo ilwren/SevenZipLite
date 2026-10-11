@@ -4,7 +4,34 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-11
+
+### 新增 / Added
+- **三个核心 API 都新增了异步版本：`SevenZipCompressor.CreateArchiveAsync` /
+  `SevenZipArchive.ListAsync` / `SevenZipArchive.ExtractAllAsync`**。底层的 7-Zip
+  native 调用本身是阻塞式的，这些异步方法只是用 `Task.Run` 把调用丢到线程池，让调用方
+  的 `await` 不会卡住当前线程（比如 UI 线程），并不是真正意义上的异步 I/O。
+- **`CreateArchive`/`List`/`ExtractAll`（含它们的 `*Async` 版本）新增了可选的
+  `IProgress<SevenZipProgress>? progress` 参数**，用于汇报字节级压缩/解压进度。新增
+  公共类型 `SevenZipProgress`（`BytesCompleted`/`BytesTotal`/`Percentage`）。tar.gz
+  在内部是"先打包 tar 再 gzip 压缩"（创建）或"先解出内层 tar 再展开"（解压）两个独立
+  阶段，会各自汇报一轮完整的 0%→100%，不会合并成一个加权总进度，调用方需要自行处理
+  这个特殊情况（详见 `SevenZipProgress` 的类型注释）。
+- **`CreateArchive`/`List`/`ExtractAll`（含它们的 `*Async` 版本）新增了可选的
+  `CancellationToken cancellationToken` 参数**，支持取消正在进行的压缩/解压/列目录
+  操作，取消后抛出标准的 `OperationCanceledException`。取消粒度是**条目之间**，不是
+  字节级/单个条目内部：一旦某个文件已经开始被压缩/解压，这次取消请求要等这个文件处理
+  完、native 下一次调用回调时才会生效，无法从内部中途打断单个文件的编解码过程。
+- 以上新增参数全部是**追加在参数列表末尾的可选参数**，不影响任何现有调用代码，不是
+  破坏性变更。
+
 ### 修复 / Fixed
+- **修复进度汇报里"已完成字节数"的数值来源 bug**：7-Zip 的 `IProgress::SetCompleted`
+  在 COM 层声明的是 `const UInt64 *completeValue`（指针，可以是 NULL 表示"当前不可用"），
+  不是按值传递的 `UInt64`；本次实现进度汇报功能的过程中一度错误地把这个指针的地址本身
+  强转成已完成字节数，导致汇报出来的数值远大于总字节数（自检用例已发现并覆盖回归，
+  见 `AsyncApiTestRunner` 的 "progress reporting" 用例）。现在统一通过新增的
+  `NativePtr.ReadUInt64OrDefault` 辅助方法正确解引用这个指针。
 - **修复打开「加密文件名」（header encryption，`-mhe=on`）的 7z 归档时必定抛出
   `IInArchive.Open 失败, HRESULT=0x00000001` 的问题**：`ArchiveOpenCallback`（用于
   `SevenZipArchive.List`/`ExtractAll` 内部的 `IInArchive.Open` 阶段）此前没有实现
@@ -21,6 +48,36 @@
 - `SevenZipArchive.Check()` 现在对 `S_FALSE`（HRESULT=1，一个合法的 COM 成功码，并非真正
   的失败）给出专门的、更有指向性的错误信息，而不是和其他真失败 HRESULT 一样笼统地报
   `HRESULT=0x00000001`。
+- **修复 Release workflow 每次发布都在复用旧 Release、而不是创建全新 Release 的问题**：
+  `softprops/action-gh-release` 对同一个 `tag_name` 默认是"创建或更新"语义——如果该
+  tag 已经有一个 Release（比如之前手动跑过、或重新 dispatch 同一版本号重跑过
+  workflow），它会直接复用旧 Release，只更新标题/说明文字，并把这次的新文件追加到
+  旧 Release 原有的附件列表里，不会清空上次遗留的文件。现在 `create-release` job 会
+  在创建 Release 前先显式删除同一 tag 下任何已存在的旧 Release（只删 Release 本身，
+  不删 tag），保证每次发布看到的都是"这个 tag 还没有 Release"的干净状态，从而总是
+  创建一个全新的 Release。
+- **Release 的 GitHub Release 附件里不再包含 `.snupkg`**：`.snupkg`（调试符号包）是给
+  符号服务器用的，仍然会在 `pack-nuget` job 的中间产物里保留、并在配置好下面提到的
+  Trusted Publishing 后随 `.nupkg` 一起被 `dotnet nuget push` 自动推送到 nuget.org 的
+  符号服务器，但不再附加到面向终端用户下载的 GitHub Release 里。
+
+### 完善 / Improved
+- **`publish-nuget-org` job 从长期有效的 API Key 迁移到 nuget.org 官方推荐的 Trusted
+  Publishing（OIDC）**：nuget.org 明确提示自动化发布不建议继续用 API Key（哪怕是
+  glob-pattern 限定、带过期时间的那种），推荐改用 Trusted Publishing。现在这个 job
+  用 nuget.org 官方的 `NuGet/login@v1` action，在运行时拿 GitHub 签发的 OIDC token
+  （job 加了 `permissions: id-token: write`）向 nuget.org 换一个只活 1 小时的临时
+  API Key 再推送，不再需要在仓库里存一个长期有效的 `NUGET_API_KEY` secret——只需要
+  配置一个 `NUGET_USERNAME` secret（你的 nuget.org 用户名）加上在 nuget.org 后台
+  添加一条 Trusted Publishing 策略（Repository Owner / Repository /
+  `Workflow File: release.yml`）。没配置时该 job 仍会正常跳过（不报错，GitHub
+  Release 照常发布）。原先基于 `NUGET_API_KEY` 的流程已完全移除；如果之前配置过这个
+  secret，现在可以从仓库里删掉了。
+- **完善 `publish-nuget-org` job 的可观测性**：现在无论实际推送还是因为没配置
+  `NUGET_USERNAME` 而跳过，都会在该次运行的 Job Summary 里明确写出结果（推送了哪个
+  版本 / 为什么跳过），不用再去翻日志。`publish-nuget-org` job 自身的注释里补充了
+  配置 Trusted Publishing 策略、以及在仓库 Secrets 里添加 `NUGET_USERNAME` 的具体
+  步骤。
 
 ## [0.1.1] - 2026-10-06
 

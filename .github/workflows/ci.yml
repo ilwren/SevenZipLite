@@ -1,0 +1,69 @@
+name: CI
+
+# 触发条件 / Trigger:
+#   日常开发用的轻量级验证：推送到任意分支，或者有 Pull Request 时自动跑。
+#   和 release.yml 是两个独立的 workflow——release.yml 只在打 v1.2.3 这种 tag（或手动
+#   触发）时才跑，覆盖的是"发布前要不要卡住"的问题；这个 workflow 覆盖的是"平时每次
+#   提交/每个 PR 能不能快速知道接口有没有跑挂"，两者触发条件不重叠（`branches: ["**"]`
+#   只匹配分支 push，不匹配 tag push，所以打 tag 时不会重复跑一遍）。
+#
+#   Lightweight day-to-day validation: runs on every push to any branch and on every
+#   pull request. This is a separate workflow from release.yml — release.yml only runs
+#   on a `v1.2.3`-style tag push (or manual dispatch) and gates whether a release should
+#   proceed; this one answers "did I just break something" on every commit/PR. The two
+#   don't overlap (`branches: ["**"]` only matches branch pushes, not tag pushes, so
+#   pushing a tag doesn't also trigger this workflow a second time).
+#
+# 范围 / Scope:
+#   只跑 tests/SevenZipLite.Tests 里的 21 个正确性自检用例（格式 x 分卷 x 密码矩阵，
+#   以及异步 API / 进度汇报 / 取消令牌），不跑 release.yml 里那种更耗时的多线程压力
+#   测试和 Native AOT 发布验证——那两项仍然只作为发布前的质量门槛保留在 release.yml，
+#   避免这个本该"几秒钟出结果"的 CI 变得又大又慢。
+#
+#   Only runs the 21 correctness self-test cases in tests/SevenZipLite.Tests (the
+#   format x split-volume x password matrix, plus async API / progress reporting /
+#   cancellation token coverage) — it deliberately skips the heavier multi-threading
+#   stress test and Native AOT publish verification that release.yml runs; those stay
+#   as release-time quality gates only, so this "should finish in seconds" CI doesn't
+#   turn into something big and slow.
+#
+# 平台矩阵 / Platform matrix:
+#   ubuntu-latest (linux-x64) + windows-latest (win-x64)，两者都有现成的原生库
+#   （native-libs/linux-x64、native-libs/win-x64），tests/SevenZipLite.Tests.csproj
+#   会按运行平台自动选择要 Link 哪一份，不需要任何额外配置。没有加入 macos-latest：
+#   仓库里没有 macOS 的原生库（native-libs/ 下没有 osx-* 目录），加了也会在加载原生库
+#   那一步直接失败，见 native-libs/README.md 和本仓库根 README 的"已知缺口"部分。
+#
+#   ubuntu-latest (linux-x64) + windows-latest (win-x64) — both have a ready-made
+#   native binary (native-libs/linux-x64, native-libs/win-x64) that
+#   tests/SevenZipLite.Tests.csproj auto-selects based on the host OS, no extra config
+#   needed. macos-latest is intentionally not included: there's no macOS native binary
+#   in this repo (no osx-* folder under native-libs/), so it would just fail at
+#   native-library-load time — see native-libs/README.md and the repo root README's
+#   "known gaps" section.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  self-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: "Run self-test (21 correctness cases: format/split/password matrix + async/progress/cancellation)"
+        run: dotnet run --project tests/SevenZipLite.Tests -c Release

@@ -54,6 +54,11 @@ public static class SevenZipCompressor
     /// 传 1 可以强制单线程（等价于历史上的 <c>mt=1</c> 修复方案，现在已经不再需要，仅作为
     /// 兼容/调试选项保留）。多线程压缩已经过验证安全，见 <see cref="Callbacks.UpdateCallback"/>
     /// 类型注释里对 <c>_pendingStreams</c> 设计的说明。</param>
+    /// <param name="progress">可选的进度回调，汇报字节级进度（<see cref="SevenZipProgress"/>）；
+    /// tar.gz 会分两阶段（打包 tar / gzip 压缩）各汇报一次 0~100%，见该类型注释。</param>
+    /// <param name="cancellationToken">可选的取消令牌；取消粒度是"条目之间"，正在压缩中的
+    /// 单个条目无法从内部中途打断，详见 <see cref="Callbacks.UpdateCallback"/> 的说明。
+    /// 取消后会抛出 <see cref="OperationCanceledException"/>。</param>
     public static IReadOnlyList<string> CreateArchive(
         IReadOnlyList<Entry> entries,
         string outputArchivePath,
@@ -61,13 +66,15 @@ public static class SevenZipCompressor
         string? password = null,
         long volumeSize = 0,
         ZipMethodOverride? zipMethodOverride = null,
-        int? threadCount = null)
+        int? threadCount = null,
+        IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         if (!format.SupportsPassword()) password = null;
 
         if (format == ArchiveFormat.TarGZip)
         {
-            return CreateTarGz(entries, outputArchivePath, volumeSize, threadCount);
+            return CreateTarGz(entries, outputArchivePath, volumeSize, threadCount, progress, cancellationToken);
         }
 
         var items = entries.Select(e => new UpdateSourceItem
@@ -80,12 +87,34 @@ public static class SevenZipCompressor
         }).ToList();
 
         return CreateCore(ClsidFor(format), items, outputArchivePath, password, volumeSize,
-            format == ArchiveFormat.Zip ? zipMethodOverride : null, threadCount);
+            format == ArchiveFormat.Zip ? zipMethodOverride : null, threadCount, progress, cancellationToken);
     }
+
+    /// <summary>
+    /// <see cref="CreateArchive"/> 的异步版本。底层 native 调用本身是阻塞式的，这里只是用
+    /// <c>Task.Run</c> 把它丢到线程池，让调用方的
+    /// await 不卡当前线程，不是真正意义上的异步 I/O；真正的取消/进度语义由 native 回调驱动，
+    /// 和同步版本完全一致，见 <see cref="CreateArchive"/> 参数说明。
+    /// </summary>
+    public static Task<IReadOnlyList<string>> CreateArchiveAsync(
+        IReadOnlyList<Entry> entries,
+        string outputArchivePath,
+        ArchiveFormat format,
+        string? password = null,
+        long volumeSize = 0,
+        ZipMethodOverride? zipMethodOverride = null,
+        int? threadCount = null,
+        IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+        => Task.Run(
+            () => CreateArchive(entries, outputArchivePath, format, password, volumeSize, zipMethodOverride,
+                threadCount, progress, cancellationToken),
+            cancellationToken);
 
     private static IReadOnlyList<string> CreateCore(
         Guid clsid, List<UpdateSourceItem> items, string outputArchivePath, string? password, long volumeSize,
-        ZipMethodOverride? zipMethodOverride = null, int? threadCount = null)
+        ZipMethodOverride? zipMethodOverride = null, int? threadCount = null,
+        IProgress<SevenZipProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         int hr = NativeMethods.CreateObject(clsid, Guids.IID_IOutArchive, out nint ptr);
         if (hr != HResult.S_OK || ptr == 0)
@@ -116,17 +145,29 @@ public static class SevenZipCompressor
         var outAdapter = new ComOutStream(split, leaveOpen: true);
         nint streamCcw = ComFactory.GetCcw<IOutStream>(outAdapter);
 
-        using var updateCb = new UpdateCallback(items, password);
+        using var updateCb = new UpdateCallback(items, password, progress, cancellationToken);
         nint cbCcw = ComFactory.GetCcw<IArchiveUpdateCallback>(updateCb);
 
         int hr2 = outArchive.UpdateItems(streamCcw, (uint)items.Count, cbCcw);
         split.Flush();
-        if (hr2 != HResult.S_OK)
-            throw new InvalidOperationException($"IOutArchive.UpdateItems 失败, HRESULT=0x{hr2:X8}");
+        Check(hr2, "IOutArchive.UpdateItems", cancellationToken);
 
         return split.CreatedVolumes.Count > 0
             ? split.CreatedVolumes
             : new List<string> { outputArchivePath };
+    }
+
+    private static void Check(int hr, string what, CancellationToken cancellationToken = default)
+    {
+        if (hr == HResult.S_OK) return;
+        if (hr == HResult.E_ABORT && cancellationToken.IsCancellationRequested)
+        {
+            // 调用方主动取消时，UpdateCallback 会返回 E_ABORT，UpdateItems 把这个
+            // HRESULT 一路传播上来——这里把它翻译成标准的 .NET 取消异常，而不是当成一个
+            // 真正的失败报出去（语义和 SevenZipArchive.Check 对称，见那边的注释）。
+            throw new OperationCanceledException(cancellationToken);
+        }
+        throw new InvalidOperationException($"{what} 失败, HRESULT=0x{hr:X8}");
     }
 
     /// <summary>
@@ -263,7 +304,9 @@ public static class SevenZipCompressor
     // tar.gz = gzip( tar(files) )：先在临时文件生成不分卷、不加密的 tar，
     // 再把这个 tar 作为 gzip 容器唯一的内层流，走一次只有 1 个条目的 UpdateItems，
     // 分卷（如果需要）在这一步的外层 gzip 输出上进行。
-    private static IReadOnlyList<string> CreateTarGz(IReadOnlyList<Entry> entries, string outputArchivePath, long volumeSize, int? threadCount = null)
+    private static IReadOnlyList<string> CreateTarGz(IReadOnlyList<Entry> entries, string outputArchivePath,
+        long volumeSize, int? threadCount = null, IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         string tempTar = Path.Combine(Path.GetTempPath(), $"sevenziplite_{Guid.NewGuid():N}.tar");
         try
@@ -276,7 +319,10 @@ public static class SevenZipCompressor
                 Size = new FileInfo(e.DiskPath).Length,
                 MTime = File.GetLastWriteTimeUtc(e.DiskPath)
             }).ToList();
-            CreateCore(Guids.CLSID_Tar, tarItems, tempTar, null, 0, threadCount: threadCount);
+            // 第一阶段：打包 tar（进度/取消接在这一步，见 SevenZipProgress 类型注释关于
+            // tar.gz 两阶段各汇报一轮 0~100% 的说明）。
+            CreateCore(Guids.CLSID_Tar, tarItems, tempTar, null, 0, threadCount: threadCount,
+                progress: progress, cancellationToken: cancellationToken);
 
             string innerName = Path.GetFileNameWithoutExtension(outputArchivePath) + ".tar";
             var gzItem = new List<UpdateSourceItem>
@@ -290,7 +336,9 @@ public static class SevenZipCompressor
                     MTime = File.GetLastWriteTimeUtc(tempTar)
                 }
             };
-            return CreateCore(Guids.CLSID_GZip, gzItem, outputArchivePath, null, volumeSize, threadCount: threadCount);
+            // 第二阶段：gzip 压缩那个临时 tar。
+            return CreateCore(Guids.CLSID_GZip, gzItem, outputArchivePath, null, volumeSize, threadCount: threadCount,
+                progress: progress, cancellationToken: cancellationToken);
         }
         finally
         {

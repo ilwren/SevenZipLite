@@ -1,4 +1,4 @@
-# SevenZipLite
+﻿# SevenZipLite
 
 [![License: LGPL v2.1+](https://img.shields.io/badge/license-LGPL--2.1--or--later-blue.svg)](./LICENSE)
 [![NuGet](https://img.shields.io/badge/nuget-SevenZipLite.Native-blue)](https://www.nuget.org/packages/SevenZipLite.Native)
@@ -93,9 +93,6 @@ SevenZipArchive.ExtractAll(@"C:\out\backup.7z", ArchiveFormat.SevenZip, @"C:\res
 完整 API（含分卷、密码、zip 方法选择、多线程、异常处理、原生库加载细节）见
 [**API 文档**](./docs/api/SevenZipLite.md)（[English](./docs/api/SevenZipLite.en.md)）。
 
-> ⚠️ 目前 NuGet 包尚未发布到 nuget.org（发布计划见下文"发布"一节），可先通过
-> [`scripts/pack-nuget.sh`](./scripts/pack-nuget.sh) 本地打包后用本地源测试，或直接
-> `ProjectReference` 本仓库的 `src/SevenZipLite/SevenZipLite.csproj`。
 
 ## 项目结构
 

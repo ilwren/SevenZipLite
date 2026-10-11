@@ -21,14 +21,25 @@ namespace SevenZipLite.Callbacks;
 internal sealed partial class ArchiveOpenCallback : IArchiveOpenCallback, ICryptoGetTextPassword
 {
     private readonly string? _password;
+    private readonly CancellationToken _cancellationToken;
 
-    public ArchiveOpenCallback(string? password = null)
+    public ArchiveOpenCallback(string? password = null, CancellationToken cancellationToken = default)
     {
         _password = password;
+        _cancellationToken = cancellationToken;
     }
 
-    public int SetTotal(nint files, nint bytes) => HResult.S_OK;
-    public int SetCompleted(nint files, nint bytes) => HResult.S_OK;
+    // Open 阶段通常很快（只读头部），这里支持取消主要是为了配合分卷归档——
+    // DiscoverVolumes 探测到的卷可能很多、卷本身也可能很大，Open 阶段仍然需要顺序读完
+    // 它们的头部信息。取消粒度和 Update/ExtractCallback 一致，见那两个类型上的说明。
+    // Open is usually fast (header-only read); supporting cancellation here mainly
+    // matters for split-volume archives — JoinedVolumeStream may span many/large
+    // volumes and Open still needs to sequentially read through their headers.
+    // Cancellation granularity matches Update/ExtractCallback, see their docs.
+    private int AbortIfCancelled() => _cancellationToken.IsCancellationRequested ? HResult.E_ABORT : HResult.S_OK;
+
+    public int SetTotal(nint files, nint bytes) => AbortIfCancelled();
+    public int SetCompleted(nint files, nint bytes) => AbortIfCancelled();
 
     public int CryptoGetTextPassword(out nint password)
     {

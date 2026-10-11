@@ -27,25 +27,50 @@ internal sealed partial class ExtractCallback : IArchiveExtractCallback, ICrypto
     private readonly IReadOnlyDictionary<uint, ExtractItemInfo> _items;
     private readonly string _outputDir;
     private readonly string? _password;
+    private readonly IProgress<SevenZipProgress>? _progress;
+    private readonly CancellationToken _cancellationToken;
     private nint _currentOutStreamCcw;
     private ComOutStream? _currentAdapter;
+    private ulong _total;
 
     public List<(uint Index, int OpResult)> Results { get; } = new();
 
-    public ExtractCallback(IReadOnlyDictionary<uint, ExtractItemInfo> items, string outputDir, string? password)
+    public ExtractCallback(IReadOnlyDictionary<uint, ExtractItemInfo> items, string outputDir, string? password,
+        IProgress<SevenZipProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         _items = items;
         _outputDir = outputDir;
         _password = password;
+        _progress = progress;
+        _cancellationToken = cancellationToken;
     }
 
-    public int SetTotal(ulong total) => HResult.S_OK;
-    public int SetCompleted(nint completeValue) => HResult.S_OK;
+    // 取消粒度同 UpdateCallback 的说明：条目之间可取消，正在写入中的单个条目无法从内部
+    // 中途打断。Same cancellation granularity as UpdateCallback: cancellable between
+    // items, cannot interrupt a single item mid-write from the inside.
+    private int AbortIfCancelled() => _cancellationToken.IsCancellationRequested ? HResult.E_ABORT : HResult.S_OK;
+
+    public int SetTotal(ulong total)
+    {
+        _total = total;
+        _progress?.Report(new SevenZipProgress(0, total));
+        return AbortIfCancelled();
+    }
+
+    public int SetCompleted(nint completeValue)
+    {
+        // completeValue 是 const UInt64*，必须解引用，不能直接把指针地址当数值用，详见
+        // NativePtr 类型注释（这是本次实现中发现的一个真实 bug，自检用例已覆盖回归）。
+        ulong completed = NativePtr.ReadUInt64OrDefault(completeValue);
+        _progress?.Report(new SevenZipProgress(completed, _total));
+        return AbortIfCancelled();
+    }
 
     public int GetStream(uint index, out nint outStream, int askExtractMode)
     {
         outStream = 0;
         ReleaseCurrent();
+        if (_cancellationToken.IsCancellationRequested) return HResult.E_ABORT;
 
         if (askExtractMode != AskMode.kExtract) return HResult.S_OK;
         if (!_items.TryGetValue(index, out var info) || info.IsDir) return HResult.S_OK;
