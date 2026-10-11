@@ -4,7 +4,23 @@
 
 ## [Unreleased]
 
-（暂无）/ (nothing yet)
+### 修复 / Fixed
+- **修复打开「加密文件名」（header encryption，`-mhe=on`）的 7z 归档时必定抛出
+  `IInArchive.Open 失败, HRESULT=0x00000001` 的问题**：`ArchiveOpenCallback`（用于
+  `SevenZipArchive.List`/`ExtractAll` 内部的 `IInArchive.Open` 阶段）此前没有实现
+  `ICryptoGetTextPassword`，导致它在 Open 阶段完全无法向 native 侧提供密码——这类归档
+  在 Open 阶段就需要密码才能解出头部结构（文件名/大小等），不是等到 Extract 才要密码。
+  不实现该接口时，无论密码是否正确、是否含特殊字符，Open 都会失败，native 端把这种
+  "需要密码但拿不到"的情况当作"无法识别的格式"返回 `S_FALSE`（COM 成功码，值为 1），
+  而上层 `Check()` 用 `hr != S_OK` 判断失败，于是被包成一条很容易误导人、看起来像是
+  "密码有问题"的 `HRESULT=0x00000001` 异常。现在 `ArchiveOpenCallback` 已实现
+  `ICryptoGetTextPassword`，`List`/`ExtractAll` 都新增了可选的 `password` 参数并会一路
+  透传给它；已用真实的 `7z -mhe=on` 归档实测复现问题、验证修复有效，并补充了更清晰的
+  `S_FALSE` 专用错误提示（区分"密码错误/未提供密码/文件损坏或格式不匹配"），不再是一个
+  裸的十六进制 HRESULT。
+- `SevenZipArchive.Check()` 现在对 `S_FALSE`（HRESULT=1，一个合法的 COM 成功码，并非真正
+  的失败）给出专门的、更有指向性的错误信息，而不是和其他真失败 HRESULT 一样笼统地报
+  `HRESULT=0x00000001`。
 
 ## [0.1.1] - 2026-10-06
 

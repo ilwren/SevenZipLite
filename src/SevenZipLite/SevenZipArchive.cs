@@ -76,15 +76,28 @@ public static class SevenZipArchive
 
     private static void Check(int hr, string what)
     {
-        if (hr != HResult.S_OK)
-            throw new InvalidOperationException($"{what} 失败, HRESULT=0x{hr:X8}");
+        if (hr == HResult.S_OK) return;
+        if (hr == HResult.S_FALSE)
+        {
+            // S_FALSE（=1）在 7-Zip 原生代码里是一个正常的“成功”返回码，含义是
+            // “没能把这段数据识别/解析成这种格式的有效归档”（见 7zIn.cpp 注释
+            // "S_FALSE means that file is not archive"），常见触发场景：
+            //   1) 密码错误或未提供密码，导致加密的归档头/内容无法正确解析；
+            //   2) 文件已损坏，或根本不是该 format 对应的归档格式；
+            // 这里给出比裸 HRESULT 更有指向性的提示，而不是让调用方去查 COM 错误码表。
+            throw new InvalidOperationException(
+                $"{what} 返回 S_FALSE：密码错误、未提供密码，或文件不是有效的归档（已损坏/格式不匹配）。");
+        }
+        throw new InvalidOperationException($"{what} 失败, HRESULT=0x{hr:X8}");
     }
 
-    private static void OpenStream(IInArchive archive, Stream input)
+    private static void OpenStream(IInArchive archive, Stream input, string? password = null)
     {
         var adapter = new ComInStream(input, leaveOpen: true);
         nint streamCcw = ComFactory.GetCcw<IInStream>(adapter);
-        var openCb = new ArchiveOpenCallback();
+        // 传入密码：7z「加密文件名」(header encryption / -mhe=on) 归档在 Open 阶段就需要
+        // 密码才能解出头部结构，不传会在 Open 时失败（见 ArchiveOpenCallback 的文档注释）。
+        var openCb = new ArchiveOpenCallback(password);
         nint cbCcw = ComFactory.GetCcw<IArchiveOpenCallback>(openCb);
         int hr = archive.Open(streamCcw, 0, cbCcw);
         Check(hr, "IInArchive.Open");
@@ -92,15 +105,17 @@ public static class SevenZipArchive
 
     /// <summary>列出普通格式（7z/zip/tar）归档内容；不支持 tar.gz（tar.gz 只有单一内层流，
     /// 请用 <see cref="ListTarGz"/>）。archivePathOrFirstVolume 可以是完整路径，也可以是
-    /// 分卷归档的第一卷（如 xxx.7z.001），也可以是分卷的基础名（xxx.7z，会自动探测 .001/.002…）。</summary>
-    public static List<ExtractItemInfo> List(string archivePathOrFirstVolume, ArchiveFormat format)
+    /// 分卷归档的第一卷（如 xxx.7z.001），也可以是分卷的基础名（xxx.7z，会自动探测 .001/.002…）。
+    /// password 仅在归档启用了「加密文件名」（7z header encryption）时才需要——普通的仅加密
+    /// 内容、不加密文件名的归档可以不传 password 也能正常列出文件名/大小列表。</summary>
+    public static List<ExtractItemInfo> List(string archivePathOrFirstVolume, ArchiveFormat format, string? password = null)
     {
         if (format == ArchiveFormat.TarGZip) return ListTarGz(archivePathOrFirstVolume);
 
         var volumes = JoinedVolumeStream.DiscoverVolumes(archivePathOrFirstVolume);
         using var input = new JoinedVolumeStream(volumes);
         var archive = CreateHandler(ClsidFor(format));
-        OpenStream(archive, input);
+        OpenStream(archive, input, password);
         try { return ListOpened(archive); }
         finally { archive.Close(); }
     }
@@ -117,7 +132,7 @@ public static class SevenZipArchive
         var volumes = JoinedVolumeStream.DiscoverVolumes(archivePathOrFirstVolume);
         using var input = new JoinedVolumeStream(volumes);
         var archive = CreateHandler(ClsidFor(format));
-        OpenStream(archive, input);
+        OpenStream(archive, input, password);
         try
         {
             var items = ListOpened(archive);

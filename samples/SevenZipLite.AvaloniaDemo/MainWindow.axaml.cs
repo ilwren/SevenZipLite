@@ -217,7 +217,9 @@ public partial class MainWindow : Window
             ExtractButton.IsEnabled = false;
             string openTarget = _lastVolumePaths.Count > 1 ? _lastVolumePaths[0] : _lastArchivePath;
 
-            var listed = await Task.Run(() => SevenZipArchive.List(openTarget, _lastFormat));
+            // 传入 _lastPassword：如果归档启用了「加密文件名」(7z header encryption)，
+            // List 在 Open 阶段就需要密码才能解出文件名/大小等头部信息。
+            var listed = await Task.Run(() => SevenZipArchive.List(openTarget, _lastFormat, _lastPassword));
 
             Directory.CreateDirectory(extractDir);
             await Task.Run(() => SevenZipArchive.ExtractAll(openTarget, _lastFormat, extractDir, _lastPassword));
