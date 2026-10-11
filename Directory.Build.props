@@ -11,18 +11,13 @@
     copyright/author info for consistency.
   -->
   <PropertyGroup>
-    <Authors>SevenZipLite Contributors</Authors>
-    <Company>SevenZipLite Contributors</Company>
+    <Authors>ilwren</Authors>
+    <Company>ilwren</Company>
     <Product>SevenZipLite</Product>
-    <Copyright>Copyright (c) 2026 SevenZipLite Contributors</Copyright>
+    <Copyright>Copyright (c) 2026 ilwren</Copyright>
 
-    <!--
-      TODO: 替换成真实仓库地址后删除这条 TODO。在此之前 CI 产出的包/文档里这个地址都是占位符。
-      TODO: replace with the real repository URL, then delete this TODO. Until then, every
-      package/doc produced by CI will contain this placeholder URL.
-    -->
-    <RepositoryUrl>https://github.com/your-org/SevenZipLite</RepositoryUrl>
-    <PackageProjectUrl>https://github.com/your-org/SevenZipLite</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ilwren/SevenZipLite</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/ilwren/SevenZipLite</PackageProjectUrl>
     <RepositoryType>git</RepositoryType>
 
     <!--
@@ -36,7 +31,7 @@
       Git tag) in .github/workflows/release.yml — see that file's comments.
       CHANGELOG.md records what changed in each version.
     -->
-    <Version Condition="'$(Version)' == ''">0.1.0</Version>
+    <Version Condition="'$(Version)' == ''">0.1.3</Version>
 
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>

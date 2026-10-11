@@ -1,4 +1,4 @@
-﻿# SevenZipLite
+# SevenZipLite
 
 [![License: LGPL v2.1+](https://img.shields.io/badge/license-LGPL--2.1--or--later-blue.svg)](./LICENSE)
 [![NuGet](https://img.shields.io/badge/nuget-SevenZipLite.Native-blue)](https://www.nuget.org/packages/SevenZipLite.Native)
@@ -93,6 +93,9 @@ SevenZipArchive.ExtractAll(@"C:\out\backup.7z", ArchiveFormat.SevenZip, @"C:\res
 完整 API（含分卷、密码、zip 方法选择、多线程、异常处理、原生库加载细节）见
 [**API 文档**](./docs/api/SevenZipLite.md)（[English](./docs/api/SevenZipLite.en.md)）。
 
+> ⚠️ 目前 NuGet 包尚未发布到 nuget.org（发布计划见下文"发布"一节），可先通过
+> [`scripts/pack-nuget.sh`](./scripts/pack-nuget.sh) 本地打包后用本地源测试，或直接
+> `ProjectReference` 本仓库的 `src/SevenZipLite/SevenZipLite.csproj`。
 
 ## 项目结构
 
@@ -292,6 +295,3 @@ Igor Pavlov 及 7-Zip 项目贡献者独立拥有版权的第三方代码，与�
 - `dotnet build SevenZipLite.sln -c Release` 无警告无错误。
 - `dotnet run --project tests/SevenZipLite.Tests -c Release -- --stress` 全部用例通过。
 - 涉及原生库改动时，同步更新 `native-libs/README.md` 与受影响的 RID 说明。
-
-> 📌 **注意**：`Directory.Build.props` 里的仓库地址目前是占位符
-> `https://github.com/your-org/SevenZipLite`，请在 fork/发布前替换为你自己的实际仓库地址。
