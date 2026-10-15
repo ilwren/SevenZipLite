@@ -16,6 +16,7 @@ consumers, not just this repo's own demos.
 - [`SevenZipCompressor`](#sevenzipcompressor)
 - [`SevenZipArchive`](#sevenziparchive)
 - [`ExtractItemInfo`](#extractiteminfo)
+- [`SevenZipArchiveEditor` (incremental add/delete)](#sevenziparchiveeditor-incremental-adddelete)
 - [`ZipMethodOverride`](#zipmethodoverride)
 - [Exceptions and error handling](#exceptions-and-error-handling)
 - [Threading and concurrency](#threading-and-concurrency)
@@ -123,6 +124,53 @@ var volumes3 = SevenZipCompressor.CreateArchive(
     entries, @"C:\out\backup.7z", ArchiveFormat.SevenZip, threadCount: 1);
 ```
 
+### `CreateArchiveFromDirectory`
+
+Convenience method for compressing an entire directory on disk. Internally it recursively
+walks the directory into a list of `Entry` and calls `CreateArchive`, so you don't have to
+walk the tree and build archive-relative paths by hand. Has an async
+`CreateArchiveFromDirectoryAsync` counterpart.
+
+```csharp
+public static IReadOnlyList<string> CreateArchiveFromDirectory(
+    string sourceDirectory,
+    string outputArchivePath,
+    ArchiveFormat format,
+    bool includeBaseDirectory = true,
+    Func<string, bool>? filter = null,
+    string? password = null,
+    long volumeSize = 0,
+    ZipMethodOverride? zipMethodOverride = null,
+    int? threadCount = null,
+    IProgress<SevenZipProgress>? progress = null,
+    CancellationToken cancellationToken = default);
+```
+
+| Parameter | Description |
+|---|---|
+| `sourceDirectory` | Source directory to compress; throws `DirectoryNotFoundException` if it doesn't exist. |
+| `includeBaseDirectory` | `true` (default): archive paths are prefixed with `sourceDirectory`'s own folder name as the root (e.g. compressing `C:\data\photos` yields `photos/a.jpg` — similar to Explorer's "Compress to xxx.zip"); `false`: flattens the directory's contents straight into the archive root (yields `a.jpg`, no `photos/` level). |
+| `filter` | Optional filter callback that receives a file's full disk path and returns `false` to exclude it (e.g. excluding `.git`/`node_modules`). Defaults to including every file under the directory. |
+| Remaining parameters | Same meaning as [`CreateArchive`](#createarchive) (password/volume size/compression method/thread count/progress/cancellation). |
+
+**Known limitation**: only files are enumerated recursively — empty subdirectories are not
+preserved as a standalone "directory entry" in the archive (they won't be recreated on
+extraction). Throws `InvalidOperationException` when the directory has nothing to compress
+(empty, or everything got excluded by `filter`).
+
+**Example**:
+
+```csharp
+// Compress a whole directory, archive paths prefixed with "photos/"
+SevenZipCompressor.CreateArchiveFromDirectory(@"C:\data\photos", @"C:\out\photos.zip", ArchiveFormat.Zip);
+
+// Flatten to the root, excluding the .git directory
+SevenZipCompressor.CreateArchiveFromDirectory(
+    @"C:\repo", @"C:\out\repo.zip", ArchiveFormat.Zip,
+    includeBaseDirectory: false,
+    filter: path => !path.Replace('\\', '/').Contains("/.git/"));
+```
+
 ## `SevenZipArchive`
 
 High-level API for reading/extracting archives.
@@ -171,6 +219,80 @@ public sealed class ExtractItemInfo
 Entry information returned by `SevenZipArchive.List`. `Path` always uses `/` as the separator
 (backslashes from Windows-created archives are normalized internally). `Size` is typically `0`
 for directory entries.
+
+## `SevenZipArchiveEditor` (incremental add/delete)
+
+An object-oriented, `using`-friendly session for adding/removing entries in an **existing
+7z/zip archive**. Unlike the "create-everything-at-once / extract-everything-at-once" static
+methods on `SevenZipCompressor`/`SevenZipArchive` above, `SevenZipArchiveEditor` supports
+**true incremental updates** — built on 7-Zip's native `IOutArchive::UpdateItems` mechanism
+("keep unchanged entries, only re-encode new ones"), without re-packing the whole archive from
+scratch.
+
+```csharp
+public sealed class SevenZipArchiveEditor : IDisposable
+{
+    public sealed class EntryInfo
+    {
+        public required string Path { get; init; }
+        public required bool IsDir { get; init; }
+        public long Size { get; init; }
+        public required bool IsPendingChange { get; init; }
+    }
+
+    public static SevenZipArchiveEditor Open(string archivePath, ArchiveFormat format, string? password = null);
+    public static SevenZipArchiveEditor Create(string archivePath, ArchiveFormat format, string? password = null);
+
+    public bool HasPendingChanges { get; }
+
+    public IReadOnlyList<EntryInfo> List();
+    public void AddFile(string diskPath, string archivePath);
+    public int AddDirectory(string sourceDirectory, bool includeBaseDirectory = true, Func<string, bool>? filter = null);
+    public bool Delete(string archivePath);
+    public int Delete(Func<EntryInfo, bool> predicate);
+    public void ExtractAll(string outputDir, IProgress<SevenZipProgress>? progress = null, CancellationToken cancellationToken = default);
+    public void SaveChanges(IProgress<SevenZipProgress>? progress = null, CancellationToken cancellationToken = default);
+    public void Dispose();
+}
+```
+
+| Member | Description |
+|---|---|
+| `Open(path, format, password)` | Opens an **existing** 7z/zip archive; throws `FileNotFoundException` if it doesn't exist. |
+| `Create(path, format, password)` | Starts a blank editing session; `path` doesn't need to exist yet — it's only actually created on the first `SaveChanges()` (an existing file at `path` is overwritten, same semantics as `CreateArchive`). |
+| `List()` | Returns "what the archive would look like if `SaveChanges` were called right now" — saved entries (minus ones marked for deletion) plus queued-but-not-yet-saved new entries, **not** just what's currently on disk (`EntryInfo.IsPendingChange` tells the two apart). |
+| `AddFile(diskPath, archivePath)` | Queues adding/replacing a file. Throws `FileNotFoundException` immediately if `diskPath` doesn't exist (fail fast); if `archivePath` collides with an existing entry (saved or queued) it's a **replace**. Only queued — the actual read happens at `SaveChanges` time. |
+| `AddDirectory(...)` | Queues an entire directory, using the exact same walking rules as [`CreateArchiveFromDirectory`](#createarchivefromdirectory). Returns the number of files queued. |
+| `Delete(archivePath)` | Deletes one entry by exact, case-sensitive path match; returns whether anything was actually found and removed. |
+| `Delete(predicate)` | Calls `Delete(string)` for every entry in the current `List()` snapshot matching `predicate`; returns how many were actually removed. |
+| `ExtractAll(outputDir, progress, cancellationToken)` | Extracts the current logical state (saved minus deleted, plus queued adds). `progress` only covers the "extract saved entries from the on-disk archive" step — queued new entries are plain `File.Copy`'d and don't count toward it. |
+| `SaveChanges(progress, cancellationToken)` | Writes queued changes to disk for real: writes to a temp file, then atomically replaces the original only on success (a mid-way failure never corrupts the original; the temp file is cleaned up). Reopens itself against the new content as the new baseline on success. A no-op when there are no pending changes. |
+| `Dispose()` | Releases native handles. **Does not auto-`SaveChanges`** — queued changes that were never explicitly saved are silently discarded here (check `HasPendingChanges` beforehand if unsure). This is an intentional transaction-like design, not a bug. |
+
+**Scope limitations**:
+
+- **Only `ArchiveFormat.SevenZip`/`ArchiveFormat.Zip` are supported** — `Tar`/`TarGZip` have no
+  "entry index" concept internally and can't be updated in place; `Open`/`Create` throw
+  `NotSupportedException` for those formats. You still need
+  `SevenZipCompressor.CreateArchive` (full re-pack) for tar/tar.gz.
+- **No multi-volume support** — `Open` only recognizes a single, complete file; it does not
+  handle split `.7z.001`/`.002`/... archives.
+- No single-entry extraction (only `ExtractAll`, same as the static `SevenZipArchive`).
+- Path matching is exact, case-sensitive string comparison — no case folding, no wildcards.
+
+**Example**:
+
+```csharp
+using var editor = SevenZipArchiveEditor.Open(@"C:\out\backup.zip", ArchiveFormat.Zip, password: "s3cr3t");
+
+editor.Delete("old/report.pdf");
+editor.AddFile(@"C:\data\new-report.pdf", "new-report.pdf");
+editor.AddDirectory(@"C:\data\extra-photos", includeBaseDirectory: false);
+
+Console.WriteLine(editor.HasPendingChanges); // true
+editor.SaveChanges(); // only now are changes actually written to disk; otherwise they're
+                       // discarded when the using block ends
+```
 
 ## `ZipMethodOverride`
 

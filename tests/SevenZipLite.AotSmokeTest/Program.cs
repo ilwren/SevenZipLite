@@ -54,6 +54,42 @@ try
     }
     Console.WriteLine($"[3/3] Extracted content matches original: {extractedContent}");
 
+    // 额外验证 SevenZipArchiveEditor 的增量更新路径——它用到了一个之前任何 AOT 冒烟测试都
+    // 没覆盖过的互操作手法（对同一个原生 IInArchive 指针做 Marshal.QueryInterface 换
+    // IOutArchive），单靠编译期 <IsAotCompatible> 分析完全看不出这条路径在真正的 Native AOT
+    // 产物里是否可行，必须像上面一样实际跑一遍。
+    //
+    // Also exercise SevenZipArchiveEditor's incremental-update path — it uses an interop
+    // technique no previous AOT smoke test covered (Marshal.QueryInterface for IOutArchive
+    // off the same native IInArchive pointer). Compile-time <IsAotCompatible> analysis alone
+    // cannot tell whether this path actually works in a real Native AOT build; it must be
+    // run for real, just like the steps above.
+    var newFile = Path.Combine(workDir, "added.txt");
+    File.WriteAllText(newFile, "added under AOT");
+    using (var editor = SevenZipArchiveEditor.Open(zipPath, ArchiveFormat.Zip, password: "aot-smoke-pw"))
+    {
+        editor.AddFile(newFile, "added.txt");
+        editor.Delete("hello.txt");
+        editor.SaveChanges();
+    }
+
+    var afterEdit = SevenZipArchive.List(zipPath, ArchiveFormat.Zip);
+    if (afterEdit.Count != 1 || afterEdit[0].Path != "added.txt")
+    {
+        Console.Error.WriteLine($"FAIL: SevenZipArchiveEditor.SaveChanges produced unexpected entries (count={afterEdit.Count})");
+        return 1;
+    }
+
+    var extractDir2 = Path.Combine(workDir, "extracted-after-edit");
+    SevenZipArchive.ExtractAll(zipPath, ArchiveFormat.Zip, extractDir2, password: "aot-smoke-pw");
+    var addedContent = File.ReadAllText(Path.Combine(extractDir2, "added.txt"));
+    if (addedContent != "added under AOT")
+    {
+        Console.Error.WriteLine("FAIL: content added via SevenZipArchiveEditor does not match after round-trip.");
+        return 1;
+    }
+    Console.WriteLine("[4/4] SevenZipArchiveEditor incremental add/delete + SaveChanges verified under AOT");
+
     Console.WriteLine("AOT SMOKE TEST: PASS");
     return 0;
 }

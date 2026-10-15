@@ -31,7 +31,7 @@
       Git tag) in .github/workflows/release.yml — see that file's comments.
       CHANGELOG.md records what changed in each version.
     -->
-    <Version Condition="'$(Version)' == ''">0.1.3</Version>
+    <Version Condition="'$(Version)' == ''">0.1.4</Version>
 
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>

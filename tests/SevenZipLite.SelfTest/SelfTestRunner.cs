@@ -78,6 +78,10 @@ public static class SelfTestRunner
         // 异步 API / 进度汇报 / 取消令牌专项用例，见 AsyncApiTestRunner 类型注释。
         results.AddRange(AsyncApiTestRunner.RunAll(entries, rootDir, outDir));
 
+        // CreateArchiveFromDirectory 便捷方法 + SevenZipArchiveEditor 增量 CRUD 专项用例，
+        // 见 ArchiveEditorTestRunner 类型注释。
+        results.AddRange(ArchiveEditorTestRunner.RunAll(rootDir));
+
         return results;
     }
 

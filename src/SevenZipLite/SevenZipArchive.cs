@@ -24,7 +24,15 @@ public static class SevenZipArchive
         return ComFactory.GetRcw<IInArchive>(ptr);
     }
 
-    private static List<ExtractItemInfo> ListOpened(IInArchive archive)
+    // 下面几个方法原来是 private，现在放宽到 internal：SevenZipArchiveEditor（支持对已存在的
+    // 7z/zip 归档做增量增/删条目的面向对象 API）需要复用这套"读取已打开 IInArchive 的
+    // 条目列表/属性"逻辑，不想再抄一遍 PropVariant 解析代码。纯可见性放宽，行为不变。
+    // The methods below used to be private; widened to internal because SevenZipArchiveEditor
+    // (the object-oriented API for incrementally adding/removing entries in an existing
+    // 7z/zip archive) needs to reuse this "read entry list/properties off an opened
+    // IInArchive" logic instead of duplicating the PropVariant-parsing code. Pure
+    // visibility widening, no behavior change.
+    internal static List<ExtractItemInfo> ListOpened(IInArchive archive)
     {
         int hr = archive.GetNumberOfItems(out uint count);
         Check(hr, nameof(archive.GetNumberOfItems));
@@ -40,7 +48,7 @@ public static class SevenZipArchive
         return list;
     }
 
-    private static string? GetStringProp(IInArchive archive, uint index, uint propId)
+    internal static string? GetStringProp(IInArchive archive, uint index, uint propId)
     {
         int hr = archive.GetProperty(index, propId, out PropVariant v);
         Check(hr, "GetProperty");
@@ -49,7 +57,7 @@ public static class SevenZipArchive
         return s;
     }
 
-    private static bool GetBoolProp(IInArchive archive, uint index, uint propId)
+    internal static bool GetBoolProp(IInArchive archive, uint index, uint propId)
     {
         int hr = archive.GetProperty(index, propId, out PropVariant v);
         Check(hr, "GetProperty");
@@ -58,7 +66,7 @@ public static class SevenZipArchive
         return b;
     }
 
-    private static long GetInt64Prop(IInArchive archive, uint index, uint propId)
+    internal static long GetInt64Prop(IInArchive archive, uint index, uint propId)
     {
         int hr = archive.GetProperty(index, propId, out PropVariant v);
         Check(hr, "GetProperty");
@@ -74,7 +82,7 @@ public static class SevenZipArchive
         };
     }
 
-    private static void Check(int hr, string what, CancellationToken cancellationToken = default)
+    internal static void Check(int hr, string what, CancellationToken cancellationToken = default)
     {
         if (hr == HResult.S_OK) return;
         if (hr == HResult.E_ABORT && cancellationToken.IsCancellationRequested)

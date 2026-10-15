@@ -111,6 +111,74 @@ public static class SevenZipCompressor
                 threadCount, progress, cancellationToken),
             cancellationToken);
 
+    /// <summary>
+    /// <see cref="CreateArchive"/> 的便捷封装：直接压缩一整个磁盘目录，不用自己递归遍历、
+    /// 手工拼每个文件的归档内相对路径。其余参数（密码/分卷/压缩方法/线程数/进度/取消）
+    /// 语义和 <see cref="CreateArchive"/> 完全一致，内部就是先用
+    /// <see cref="DirectoryEntryBuilder.BuildEntries"/> 构造出 <see cref="Entry"/> 列表，
+    /// 再调用 <see cref="CreateArchive"/>。
+    /// </summary>
+    /// <param name="sourceDirectory">要压缩的源目录。</param>
+    /// <param name="outputArchivePath">最终归档路径（不带卷号后缀）。</param>
+    /// <param name="format">归档格式。</param>
+    /// <param name="includeBaseDirectory">true（默认）：归档内路径带上
+    /// <paramref name="sourceDirectory"/> 本身的目录名作为根（压缩 /data/photos 得到
+    /// photos/a.jpg、photos/b.jpg，类似资源管理器右键"压缩到 xxx.zip"的习惯）；
+    /// false：直接把目录内容铺平到归档根（得到 a.jpg、b.jpg，不含 photos/ 这一层）。</param>
+    /// <param name="filter">可选过滤回调，入参是文件的完整磁盘路径，返回 false 表示排除这个
+    /// 文件（比如排除 .git/node_modules 目录下的内容）。不传则包含目录下的全部文件。</param>
+    /// <param name="password">可选密码（仅 7z/zip 生效）。</param>
+    /// <param name="volumeSize">分卷大小（字节），0 表示不分卷。</param>
+    /// <param name="zipMethodOverride">仅在 format=Zip 时有意义，显式指定压缩方法。</param>
+    /// <param name="threadCount">压缩线程数，默认 null 时取 <see cref="Environment.ProcessorCount"/>。</param>
+    /// <param name="progress">可选的进度回调，语义同 <see cref="CreateArchive"/>。</param>
+    /// <param name="cancellationToken">可选的取消令牌，语义同 <see cref="CreateArchive"/>。</param>
+    /// <exception cref="DirectoryNotFoundException"><paramref name="sourceDirectory"/> 不存在。</exception>
+    /// <exception cref="InvalidOperationException">目录下没有任何文件可压缩（目录为空，或者
+    /// 全部被 <paramref name="filter"/> 排除掉了）。</exception>
+    public static IReadOnlyList<string> CreateArchiveFromDirectory(
+        string sourceDirectory,
+        string outputArchivePath,
+        ArchiveFormat format,
+        bool includeBaseDirectory = true,
+        Func<string, bool>? filter = null,
+        string? password = null,
+        long volumeSize = 0,
+        ZipMethodOverride? zipMethodOverride = null,
+        int? threadCount = null,
+        IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var entries = DirectoryEntryBuilder.BuildEntries(sourceDirectory, includeBaseDirectory, filter);
+        if (entries.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"目录下没有可压缩的文件: {sourceDirectory}（目录为空，或者全部被 filter 排除掉了）。");
+        }
+
+        return CreateArchive(entries, outputArchivePath, format, password, volumeSize, zipMethodOverride,
+            threadCount, progress, cancellationToken);
+    }
+
+    /// <summary><see cref="CreateArchiveFromDirectory"/> 的异步版本，语义同
+    /// <see cref="CreateArchiveAsync"/>（<c>Task.Run</c> 线程池包装，不是真正的异步 I/O）。</summary>
+    public static Task<IReadOnlyList<string>> CreateArchiveFromDirectoryAsync(
+        string sourceDirectory,
+        string outputArchivePath,
+        ArchiveFormat format,
+        bool includeBaseDirectory = true,
+        Func<string, bool>? filter = null,
+        string? password = null,
+        long volumeSize = 0,
+        ZipMethodOverride? zipMethodOverride = null,
+        int? threadCount = null,
+        IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+        => Task.Run(
+            () => CreateArchiveFromDirectory(sourceDirectory, outputArchivePath, format, includeBaseDirectory,
+                filter, password, volumeSize, zipMethodOverride, threadCount, progress, cancellationToken),
+            cancellationToken);
+
     private static IReadOnlyList<string> CreateCore(
         Guid clsid, List<UpdateSourceItem> items, string outputArchivePath, string? password, long volumeSize,
         ZipMethodOverride? zipMethodOverride = null, int? threadCount = null,

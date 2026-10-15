@@ -4,6 +4,42 @@
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-15
+
+### 新增 / Added
+- **`SevenZipCompressor.CreateArchiveFromDirectory`（含 `*Async` 版本）**：压缩整个磁盘
+  目录的便捷方法，不用再自己递归遍历目录、手工拼接每个文件的归档内相对路径。
+  - `includeBaseDirectory`（默认 `true`）控制归档内路径是否带上源目录自身的名字作为根
+    （类似资源管理器右键"压缩到 xxx.zip"），`false` 则把目录内容直接铺平到归档根。
+  - 可选的 `Func<string, bool> filter` 回调按完整磁盘路径过滤文件（比如排除
+    `.git`/`node_modules`）。
+  - 其余参数（密码/分卷/压缩方法/线程数/`IProgress<SevenZipProgress>` 进度回调/
+    `CancellationToken`）语义和 `CreateArchive` 完全一致；底层就是构造出
+    `IReadOnlyList<Entry>` 后调用 `CreateArchive`，进度回调原本就支持，这里只是顺带
+    打通到新方法上。已知限制：空目录不会在归档里单独保留一个"目录条目"。
+- **`SevenZipArchiveEditor`：新增的 `IDisposable`、可以用 `using` 管理的"对已有 7z/zip
+  归档做增量增删条目"会话**，区别于 `SevenZipCompressor`/`SevenZipArchive` 那套"一次性
+  整体创建/整体解压"的静态方法——不需要解压整个归档重新打包，而是复用 7-Zip 原生
+  `IOutArchive::UpdateItems` 的"保留未改动条目、只重新编码新增条目"机制。
+  - `SevenZipArchiveEditor.Open(path, format, password)` 打开已存在的归档；
+    `SevenZipArchiveEditor.Create(path, format, password)` 新建一个空白会话（文件可以
+    还不存在，第一次 `SaveChanges()` 时才真正写入）。
+  - `List()` / `AddFile(diskPath, archivePath)` / `AddDirectory(sourceDirectory,
+    includeBaseDirectory, filter)` / `Delete(archivePath)` / `Delete(predicate)` /
+    `ExtractAll(outputDir)` / `SaveChanges()` / `HasPendingChanges`。`AddFile`/`Delete`
+    只是在内存里排队，必须显式调用 `SaveChanges()` 才会真正写回磁盘（写入临时文件成功后
+    再原子替换原文件，中途失败不会破坏原归档）；同名 `AddFile` 对现有条目是"替换"语义。
+  - **仅支持 7z 和 zip 格式**（tar 的内部实现、tar.gz 都没有"条目索引"概念，无法原地
+    增删，对这两种格式调用会抛出 `NotSupportedException`，仍然只能用
+    `SevenZipCompressor.CreateArchive` 整体重新打包）；不支持分卷归档。
+  - **`Dispose()` 不会自动保存排队中的改动**（可以用 `HasPendingChanges` 自查）——这是
+    有意的事务式设计（不 `SaveChanges()` 就等于没发生），不是 bug。
+
+### 其他 / Internal
+- `Callbacks.UpdateSourceItem` 新增 `ExistingArchiveIndex` 字段，用于支撑
+  `SevenZipArchiveEditor.SaveChanges` 的"保留旧条目 + 写入新条目"混合更新场景，对现有
+  `SevenZipCompressor.CreateArchive`（全部是新条目）的行为没有影响。
+
 ## [0.1.3] - 2026-10-11
 
 ### 变更 / Changed

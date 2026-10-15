@@ -1,4 +1,4 @@
-# SevenZipLite
+﻿# SevenZipLite
 
 [![License: LGPL v2.1+](https://img.shields.io/badge/license-LGPL--2.1--or--later-blue.svg)](./LICENSE)
 [![NuGet](https://img.shields.io/badge/nuget-SevenZipLite.Native-blue)](https://www.nuget.org/packages/SevenZipLite.Native)
@@ -40,6 +40,13 @@
 - **三平台验证**：Windows（x64/x86/arm64）、Linux（x64）、Android（arm64-v8a/armeabi-v7a/
   x86_64/x86），分别提供 Avalonia（Windows/Linux 桌面）、Linux 控制台自测、.NET MAUI 三个
   可运行的 Demo。
+- **整目录压缩便捷方法**：`SevenZipCompressor.CreateArchiveFromDirectory` 直接压缩一整个磁盘
+  目录，支持保留/不保留根目录名、自定义文件过滤回调，不用再手工递归遍历。
+- **进度回调与取消**：`CreateArchive`/`List`/`ExtractAll`（及新的 `CreateArchiveFromDirectory`）
+  都支持 `IProgress<SevenZipProgress>` 字节级进度汇报和 `CancellationToken` 取消。
+- **`SevenZipArchiveEditor`：对已有 7z/zip 归档做增量增删条目**，`using` 管理生命周期，基于
+  7-Zip 原生"保留未改动条目、只重新编码新增条目"机制，不需要整体重新打包（仅支持 7z/zip，
+  不支持分卷）。
 - **无额外托管依赖**：核心库只依赖 .NET BCL，不引入第三方压缩/COM 互操作包。
 - **多目标框架**：核心库同时支持 **`net8.0`**（当前 LTS）与 **`net10.0`**，尚未升级到最新
   .NET 版本的项目也可以直接引用。
@@ -93,9 +100,6 @@ SevenZipArchive.ExtractAll(@"C:\out\backup.7z", ArchiveFormat.SevenZip, @"C:\res
 完整 API（含分卷、密码、zip 方法选择、多线程、异常处理、原生库加载细节）见
 [**API 文档**](./docs/api/SevenZipLite.md)（[English](./docs/api/SevenZipLite.en.md)）。
 
-> ⚠️ 目前 NuGet 包尚未发布到 nuget.org（发布计划见下文"发布"一节），可先通过
-> [`scripts/pack-nuget.sh`](./scripts/pack-nuget.sh) 本地打包后用本地源测试，或直接
-> `ProjectReference` 本仓库的 `src/SevenZipLite/SevenZipLite.csproj`。
 
 ## 项目结构
 
@@ -243,6 +247,8 @@ git push origin v1.0.0
 
 - 仅支持 7z/zip/tar/tar.gz 四种格式（RAR/ISO/CAB 等不支持）。
 - 解压路径没有多线程加速（压缩有）。
+- `SevenZipArchiveEditor`（增量增删条目）仅支持 7z/zip，不支持分卷归档，也没有单条目提取——
+  详见 API 文档对应章节。
 - MAUI/Android 的原生库自动分发不走 NuGet 包内置的 `build`/`buildTransitive` 机制，需要手动
   参照 `samples/SevenZipLite.MauiDemo` 接入（详见 API 文档"原生库加载与平台要求"一节）。
 - `native/7zip-src` 下暂时只有 `build_linux.sh`；`build_windows.*`/`build_android.*` 脚本尚不

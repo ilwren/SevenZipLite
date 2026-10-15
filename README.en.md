@@ -1,4 +1,4 @@
-# SevenZipLite
+﻿# SevenZipLite
 
 [![License: LGPL v2.1+](https://img.shields.io/badge/license-LGPL--2.1--or--later-blue.svg)](./LICENSE)
 [![NuGet](https://img.shields.io/badge/nuget-SevenZipLite.Native-blue)](https://www.nuget.org/packages/SevenZipLite.Native)
@@ -45,6 +45,15 @@ official 7-Zip command-line tools.
 - **Validated on three platforms**: Windows (x64/x86/arm64), Linux (x64), Android
   (arm64-v8a/armeabi-v7a/x86_64/x86), each backed by a runnable demo — Avalonia (Windows/
   Linux desktop), a Linux console self-test, and .NET MAUI.
+- **Directory compression convenience method**: `SevenZipCompressor.CreateArchiveFromDirectory`
+  compresses an entire directory on disk directly, with options to keep/flatten the root
+  folder name and a custom file-filter callback — no manual recursive walking needed.
+- **Progress reporting and cancellation**: `CreateArchive`/`List`/`ExtractAll` (and the new
+  `CreateArchiveFromDirectory`) all support byte-level `IProgress<SevenZipProgress>` reporting
+  and `CancellationToken` cancellation.
+- **`SevenZipArchiveEditor`: incremental add/delete on an existing 7z/zip archive**, with
+  `using`-managed lifetime, built on 7-Zip's native "keep unchanged entries, only re-encode new
+  ones" mechanism — no full re-pack needed (7z/zip only, no multi-volume support).
 - **No extra managed dependencies**: the core library depends only on the .NET BCL — no
   third-party compression or COM interop packages.
 - **Multi-targeted**: the core library targets both **`net8.0`** (current LTS) and
@@ -103,10 +112,6 @@ For the full API (multi-volume archives, passwords, zip method selection, thread
 handling, native library loading details) see the
 [**API documentation**](./docs/api/SevenZipLite.en.md) ([中文](./docs/api/SevenZipLite.md)).
 
-> ⚠️ The NuGet package has not been published to nuget.org yet (see the "Releasing" section
-> below for the publishing plan). In the meantime, pack it locally with
-> [`scripts/pack-nuget.sh`](./scripts/pack-nuget.sh) and test against a local feed, or just add
-> a `ProjectReference` to this repo's `src/SevenZipLite/SevenZipLite.csproj`.
 
 ## Project structure
 
@@ -271,6 +276,8 @@ git push origin v1.0.0
 
 - Only 7z/zip/tar/tar.gz are supported (no RAR/ISO/CAB etc.).
 - Extraction has no multi-threaded acceleration (compression does).
+- `SevenZipArchiveEditor` (incremental add/delete) only supports 7z/zip, has no multi-volume
+  support, and no single-entry extraction — see the corresponding API docs section.
 - MAUI/Android native-library distribution does not go through the NuGet package's built-in
   `build`/`buildTransitive` mechanism; you need to wire it up manually following the
   `samples/SevenZipLite.MauiDemo` pattern (see the "Native library loading and platform

@@ -12,6 +12,28 @@ public sealed class UpdateSourceItem
     public string? DiskPath { get; init; } // 非目录时：磁盘上的真实文件路径
     public long Size { get; init; }
     public DateTime? MTime { get; init; }
+
+    /// <summary>
+    /// 非 null 时表示"这个条目保持不变，原样从正在更新的旧归档里按这个下标复制过来"
+    /// （native 内部直接从 <see cref="ArchiveOpenCallback"/>/<c>IInArchive.Open</c> 时的输入流里
+    /// 读取原始压缩字节重新写一份，不经过我们的 <see cref="UpdateCallback"/>.GetStream/<see cref="UpdateCallback"/>.GetProperty，
+    /// 也不会重新编码），用于 <see cref="SevenZipLite.SevenZipArchiveEditor"/> 对已有 7z/zip 归档做
+    /// 增量增删条目的场景——只有"保留下来的旧条目"需要设置这个字段，新增的条目和普通的
+    /// "创建全新归档"场景一样留空即可。为 null 时是原有行为：全新条目，走
+    /// <see cref="UpdateCallback"/>.GetStream/<see cref="UpdateCallback"/>.GetProperty 由我们提供内容和属性。
+    /// <para>
+    /// Non-null means "this entry is unchanged, copy it verbatim from the archive being
+    /// updated at this original index" (native reads the raw compressed bytes directly off
+    /// the input stream from <c>IInArchive.Open</c> and re-writes them, bypassing our
+    /// <see cref="UpdateCallback"/>.GetStream/<see cref="UpdateCallback"/>.GetProperty entirely — no re-encoding). Used by
+    /// <see cref="SevenZipLite.SevenZipArchiveEditor"/>'s incremental add/delete support for
+    /// existing 7z/zip archives — only "kept" entries need this set; newly added entries
+    /// leave it null just like the plain "create a brand new archive" scenario. Null means
+    /// the original behavior: a brand new entry, with content/properties supplied by us via
+    /// <see cref="UpdateCallback"/>.GetStream/<see cref="UpdateCallback"/>.GetProperty.
+    /// </para>
+    /// </summary>
+    public uint? ExistingArchiveIndex { get; init; }
 }
 
 /// <summary>
@@ -109,9 +131,24 @@ internal sealed partial class UpdateCallback : IArchiveUpdateCallback, ICryptoGe
 
     public int GetUpdateItemInfo(uint index, out int newData, out int newProps, out uint indexInArchive)
     {
-        newData = 1;
-        newProps = 1;
-        indexInArchive = uint.MaxValue; // -1: 全新归档，不存在“已有条目”
+        var item = _items[(int)index];
+        if (item.ExistingArchiveIndex is { } existingIndex)
+        {
+            // 保留的旧条目：告诉 native "内容和属性都不变，直接从旧归档的这个下标搬过来"。
+            // native 不会再调用 GetStream/GetProperty(index) 要内容/属性了。
+            // A kept-from-the-old-archive entry: tell native "content and properties are
+            // both unchanged, just copy them over from this index in the old archive".
+            // Native will not call GetStream/GetProperty(index) for this index anymore.
+            newData = 0;
+            newProps = 0;
+            indexInArchive = existingIndex;
+        }
+        else
+        {
+            newData = 1;
+            newProps = 1;
+            indexInArchive = uint.MaxValue; // -1: 全新条目，不存在"已有条目"
+        }
         return HResult.S_OK;
     }
 
