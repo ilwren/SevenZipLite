@@ -59,8 +59,11 @@ public static class SevenZipCompressor
 {
     public sealed class Entry
     {
-        public required string DiskPath { get; init; }
+        public string? DiskPath { get; init; }
         public required string ArchivePath { get; init; }
+        public Func<Stream>? OpenStream { get; init; }
+        public long? Length { get; init; }
+        public DateTime? LastWriteTimeUtc { get; init; }
     }
 
     public static IReadOnlyList<string> CreateArchive(
@@ -70,7 +73,10 @@ public static class SevenZipCompressor
         string? password = null,
         long volumeSize = 0,
         ZipMethodOverride? zipMethodOverride = null,
-        int? threadCount = null);
+        int? threadCount = null,
+        IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default,
+        bool encryptHeaders = true);
 }
 ```
 
@@ -78,8 +84,11 @@ public static class SevenZipCompressor
 
 | 成员 | 说明 |
 |---|---|
-| `DiskPath` | 磁盘上的真实源文件路径。 |
-| `ArchivePath` | 归档内的相对路径，建议用 `/` 分隔（跨平台一致）。 |
+| `DiskPath` | 磁盘上的真实源文件路径。必须是一个能被 `File.OpenRead` 直接打开的真实文件系统路径——不能是 URI 字符串或类似 Android `content://` 这种虚拟路径（如果路径来自文件选择器/SAF，需要先把内容拷贝到真实的临时文件）。与 `OpenStream` **互斥，两者必须且只能设置一个**；两者都不设置、或两者都设置，都会在 `CreateArchive` 里立刻抛出带具体下标的 `ArgumentException`，而不是等到内部调用 `File.*` 时才报一个不带上下文的 `ArgumentNullException`。 |
+| `ArchivePath` | 归档内的相对路径，建议用 `/` 分隔（跨平台一致）。**不能是 `null`/空字符串**，否则抛出带具体下标的 `ArgumentException`。 |
+| `OpenStream` | 条目内容来自内存/网络等非磁盘来源时，用这个委托代替 `DiskPath`——压缩过程中每次需要读取这个条目的内容都会调用一次，必须返回一个从头开始、**支持 `Seek`** 的只读流（native 7-Zip 压缩时会对输入流调用 `Seek`；不支持 `Seek` 的来源，比如原始网络流，需要先自己缓冲到 `MemoryStream` 或临时文件）。设置这个字段时必须同时设置 `Length`，否则抛 `ArgumentException`。 |
+| `Length` | 仅在设置了 `OpenStream` 时必需：流的精确字节长度（必须 ≥ 0）。7-Zip 的 native 层会在真正读取内容**之前**就需要把 `kpidSize` 写入归档头，无法事后从流本身推断，长度不准确会产生头部声明大小和实际数据对不上的损坏归档，且不一定在压缩阶段就报错。使用 `DiskPath` 时不需要设置，会自动从文件系统读取。 |
+| `LastWriteTimeUtc` | 仅在设置了 `OpenStream` 时可选：条目在归档里记录的修改时间（UTC）。不设置则该条目不写入修改时间属性。使用 `DiskPath` 时不需要设置，会自动从文件系统读取。 |
 
 ### `CreateArchive`
 
@@ -92,9 +101,17 @@ public static class SevenZipCompressor
 | `volumeSize` | 分卷大小（字节），`0` 表示不分卷；大于 0 时会在同目录生成 `outputArchivePath.001`、`.002`……返回值就是这些实际生成的卷路径列表。 |
 | `zipMethodOverride` | 仅在 `format == Zip` 时有意义，见 [`ZipMethodOverride`](#zipmethodoverride)。 |
 | `threadCount` | 压缩线程数，默认 `null` 时取 `Environment.ProcessorCount`。传 `1` 强制单线程。见[线程与并发](#线程与并发)。 |
+| `progress` | 可选的进度回调，汇报字节级压缩进度（见 `SevenZipProgress`：`BytesCompleted`/`BytesTotal`/`Percentage`）。 |
+| `cancellationToken` | 可选的取消令牌，取消粒度是"条目之间"，正在压缩中的单个条目无法从内部中途打断；取消后抛出 `OperationCanceledException`。 |
+| `encryptHeaders` | 是否同时加密归档头（文件名/文件大小/目录结构等元数据），仅在 `format == ArchiveFormat.SevenZip` 且提供了非空密码时才有意义（对应官方 7z 命令行的 `-mhe=on`；zip 格式本身不支持这个能力，不管传什么都无效）。**默认 `true`**——这和官方 7z.exe 命令行的默认值（`false`，只加密内容不加密文件头）刻意相反：只给密码不设置这个属性时，哪怕整个归档都加了密码，文件名/大小/目录结构这些元数据仍然不需要密码就能看到（`SevenZipArchive.List` 不用密码也能跑通），这是很多用户容易踩的直觉盲区。需要旧行为（比如希望别人不知道密码也能浏览归档内容）显式传 `false`。 |
 
 **返回值**：实际生成的归档文件路径列表——不分卷时是单元素列表 `[outputArchivePath]`；分卷时是
 `[outputArchivePath.001, outputArchivePath.002, ...]`。
+
+**异常**：`entries` 为 `null` 抛 `ArgumentNullException`；`entries` 非空但某一项的 `ArchivePath`
+为 `null`/空字符串，或 `DiskPath`/`OpenStream` 两者都没设置/都设置了，或设置了 `OpenStream` 但
+`Length` 缺失/为负数，都抛 `ArgumentException`，异常信息包含具体是第几个条目
+（如 `entries[2].DiskPath 为空...`），方便直接定位是哪一条数据出的问题，而不用自己一条条排查。
 
 **示例**：
 
@@ -120,6 +137,25 @@ var volumes3 = SevenZipCompressor.CreateArchive(
     entries, @"C:\out\backup.7z", ArchiveFormat.SevenZip, threadCount: 1);
 ```
 
+**条目内容来自 `Stream`（不落盘）的示例**：
+
+```csharp
+byte[] payload = GetDataFromSomewhere(); // 比如网络下载结果、数据库 BLOB 等
+
+var streamEntries = new List<SevenZipCompressor.Entry>
+{
+    // OpenStream 每次被调用都要返回一个新的、从头开始的流——MemoryStream 构造出一个新实例
+    // 天然满足这一点；如果底层资源只能被消费一次，需要自己做好可重复读取的包装。
+    new()
+    {
+        ArchivePath = "payload.bin",
+        OpenStream = () => new MemoryStream(payload, writable: false),
+        Length = payload.Length,
+    },
+};
+SevenZipCompressor.CreateArchive(streamEntries, @"C:\out\backup.7z", ArchiveFormat.SevenZip);
+```
+
 ### `CreateArchiveFromDirectory`
 
 压缩整个磁盘目录的便捷方法，内部就是递归遍历目录构造出 `Entry` 列表后调用 `CreateArchive`，
@@ -137,7 +173,8 @@ public static IReadOnlyList<string> CreateArchiveFromDirectory(
     ZipMethodOverride? zipMethodOverride = null,
     int? threadCount = null,
     IProgress<SevenZipProgress>? progress = null,
-    CancellationToken cancellationToken = default);
+    CancellationToken cancellationToken = default,
+    bool encryptHeaders = true);
 ```
 
 | 参数 | 说明 |
@@ -145,7 +182,7 @@ public static IReadOnlyList<string> CreateArchiveFromDirectory(
 | `sourceDirectory` | 要压缩的源目录，不存在时抛 `DirectoryNotFoundException`。 |
 | `includeBaseDirectory` | `true`（默认）：归档内路径带上 `sourceDirectory` 自身的目录名作为根（例如压缩 `C:\data\photos` 得到 `photos/a.jpg`，类似资源管理器右键"压缩到 xxx.zip"）；`false`：直接把目录内容铺平到归档根（得到 `a.jpg`，不含 `photos/` 这一层）。 |
 | `filter` | 可选过滤回调，入参是文件的完整磁盘路径，返回 `false` 表示排除这个文件（比如排除 `.git`/`node_modules` 目录下的内容）；不传则包含目录下的全部文件。 |
-| 其余参数 | 含义和 [`CreateArchive`](#createarchive) 完全一致（密码/分卷/压缩方法/线程数/进度/取消）。 |
+| 其余参数 | 含义和默认值和 [`CreateArchive`](#createarchive) 完全一致（密码/分卷/压缩方法/线程数/进度/取消/是否加密归档头）。 |
 
 **已知限制**：只递归枚举文件，空子目录不会在归档里单独保留一个"目录条目"（解压后不会重新生成
 那个空目录）。目录下没有任何文件可压缩时（目录为空，或全部被 `filter` 排除）抛
@@ -171,15 +208,26 @@ SevenZipCompressor.CreateArchiveFromDirectory(
 ```csharp
 public static class SevenZipArchive
 {
-    public static List<ExtractItemInfo> List(string archivePathOrFirstVolume, ArchiveFormat format);
-    public static void ExtractAll(string archivePathOrFirstVolume, ArchiveFormat format, string outputDir, string? password = null);
+    public static List<ExtractItemInfo> List(string archivePathOrFirstVolume, ArchiveFormat format,
+        string? password = null, CancellationToken cancellationToken = default);
+    public static void ExtractAll(string archivePathOrFirstVolume, ArchiveFormat format, string outputDir,
+        string? password = null, IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+    public static void ExtractEntryToStream(string archivePathOrFirstVolume, ArchiveFormat format,
+        string entryPath, Stream outputStream, string? password = null,
+        IProgress<SevenZipProgress>? progress = null, CancellationToken cancellationToken = default);
+    public static byte[] ExtractEntryBytes(string archivePathOrFirstVolume, ArchiveFormat format,
+        string entryPath, string? password = null, IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default);
 }
 ```
 
 | 成员 | 说明 |
 |---|---|
-| `List(path, format)` | 列出归档内所有条目（含目录条目）。`path` 可以是完整路径、分卷归档的第一卷（如 `xxx.7z.001`），或分卷的基础名（`xxx.7z`，会自动探测 `.001`/`.002`……）。 |
-| `ExtractAll(path, format, outputDir, password)` | 解压全部内容到 `outputDir`（自动创建目录）。`password` 对不支持密码的格式会被忽略。密码错误或数据损坏时抛 `InvalidOperationException`。 |
+| `List(path, format, password, cancellationToken)` | 列出归档内所有条目（含目录条目）。`path` 可以是完整路径、分卷归档的第一卷（如 `xxx.7z.001`），或分卷的基础名（`xxx.7z`，会自动探测 `.001`/`.002`……）。`password` 仅在归档启用了"加密文件名"（即 `encryptHeaders: true` 创建出来的 7z 归档，见 [`CreateArchive`](#createarchive)）时才需要——没加密文件头的归档不传密码也能列出文件名/大小列表。 |
+| `ExtractAll(path, format, outputDir, password, progress, cancellationToken)` | 解压全部内容到 `outputDir`（自动创建目录）。`password` 对不支持密码的格式会被忽略。密码错误或数据损坏时抛 `InvalidOperationException`。`progress`/`cancellationToken` 含义同 [`CreateArchive`](#createarchive)。 |
+| `ExtractEntryToStream(path, format, entryPath, outputStream, password, progress, cancellationToken)` | 把归档内**单个**条目的内容直接写进调用方提供的 `outputStream`，不经过磁盘临时文件。`entryPath` 必须和 `List()` 返回的 `ExtractItemInfo.Path` 完全一致（`/` 分隔、区分大小写；传 `\` 分隔会自动归一化）。`outputStream` 必须可写且**支持 `Seek`**（native 解压时会对输出流调用 `Seek`），生命周期由调用方自己管理，本方法不会关闭它。找不到条目抛 `FileNotFoundException`；`entryPath` 指向目录抛 `InvalidOperationException`。`tar.gz` 内部会先解出临时 tar 再从中定位条目，对调用方透明。 |
+| `ExtractEntryBytes(path, format, entryPath, password, progress, cancellationToken)` | `ExtractEntryToStream` 的便捷封装，直接返回条目内容的 `byte[]`（内部用 `MemoryStream` 中转）。适合条目不大的场景；条目很大时建议用 `ExtractEntryToStream` 搭配自己的流，避免整个内容常驻内存。 |
 
 **示例**：
 
@@ -195,6 +243,13 @@ SevenZipArchive.ExtractAll(@"C:\out\backup.zip", ArchiveFormat.Zip, @"C:\restore
 // 分卷归档：传基础名或第一卷都可以
 SevenZipArchive.ExtractAll(@"C:\out\backup.7z", ArchiveFormat.SevenZip, @"C:\restore");       // 自动探测 .001/.002/...
 SevenZipArchive.ExtractAll(@"C:\out\backup.7z.001", ArchiveFormat.SevenZip, @"C:\restore");   // 效果相同
+
+// 只取归档里的一个条目，直接写到内存/网络流，不落盘
+using var ms = new MemoryStream();
+SevenZipArchive.ExtractEntryToStream(@"C:\out\backup.7z", ArchiveFormat.SevenZip, "images/photo.jpg", ms);
+
+// 或者更省事，直接拿 byte[]
+byte[] photoBytes = SevenZipArchive.ExtractEntryBytes(@"C:\out\backup.7z", ArchiveFormat.SevenZip, "images/photo.jpg");
 ```
 
 ## `ExtractItemInfo`
@@ -230,8 +285,8 @@ public sealed class SevenZipArchiveEditor : IDisposable
         public required bool IsPendingChange { get; init; }
     }
 
-    public static SevenZipArchiveEditor Open(string archivePath, ArchiveFormat format, string? password = null);
-    public static SevenZipArchiveEditor Create(string archivePath, ArchiveFormat format, string? password = null);
+    public static SevenZipArchiveEditor Open(string archivePath, ArchiveFormat format, string? password = null, bool encryptHeaders = true);
+    public static SevenZipArchiveEditor Create(string archivePath, ArchiveFormat format, string? password = null, bool encryptHeaders = true);
 
     public bool HasPendingChanges { get; }
 
@@ -248,8 +303,8 @@ public sealed class SevenZipArchiveEditor : IDisposable
 
 | 成员 | 说明 |
 |---|---|
-| `Open(path, format, password)` | 打开一个**已存在**的 7z/zip 归档；文件不存在抛 `FileNotFoundException`。 |
-| `Create(path, format, password)` | 新建一个空白编辑会话，`path` 不需要已经存在；第一次 `SaveChanges()` 时才真正创建这个文件（如果 `path` 处已有文件会被直接覆盖，语义同 `CreateArchive`）。 |
+| `Open(path, format, password, encryptHeaders)` | 打开一个**已存在**的 7z/zip 归档；文件不存在抛 `FileNotFoundException`。`encryptHeaders`（默认 `true`）控制每次 `SaveChanges()` 写回时是否同时加密归档头，含义和默认值同 [`CreateArchive`](#createarchive) 的同名参数。 |
+| `Create(path, format, password, encryptHeaders)` | 新建一个空白编辑会话，`path` 不需要已经存在；第一次 `SaveChanges()` 时才真正创建这个文件（如果 `path` 处已有文件会被直接覆盖，语义同 `CreateArchive`）。`encryptHeaders` 含义同上。 |
 | `List()` | 返回"如果现在 `SaveChanges`，归档最终会是什么样子"——已保存条目（排除标记删除的）加上排队中还没保存的新增条目，**不是**单纯读磁盘上归档现在的样子（`EntryInfo.IsPendingChange` 区分两者）。 |
 | `AddFile(diskPath, archivePath)` | 排队添加/替换一个文件。`diskPath` 不存在立刻抛 `FileNotFoundException`（fail fast）；`archivePath` 和现有条目（已保存或排队中）同名时是**替换**语义。只是排队，真正读取发生在 `SaveChanges` 时。 |
 | `AddDirectory(...)` | 排队添加整个目录，遍历规则与 [`CreateArchiveFromDirectory`](#createarchivefromdirectory) 完全一致。返回排队添加的文件数。 |
@@ -308,6 +363,8 @@ public enum ZipMethodOverride
 | 原生库调用返回非 `S_OK` 的 HRESULT（含密码错误、数据损坏、不支持的操作等） | `InvalidOperationException`，`Message` 里包含具体 HRESULT（如 `0x80004005`）方便进一步排查 |
 | 无法从文件名判断格式（`DetectFromFileName`） | `NotSupportedException` |
 | 找不到原生库（`7zlite.dll`/`lib7zlite.so`） | `System.DllNotFoundException`（.NET 内置），见[原生库加载与平台要求](#原生库加载与平台要求) |
+| `ExtractEntryToStream`/`ExtractEntryBytes` 指定的 `entryPath` 在归档内不存在 | `FileNotFoundException` |
+| `ExtractEntryToStream`/`ExtractEntryBytes` 指定的 `entryPath` 是目录条目 | `InvalidOperationException` |
 | 普通 .NET I/O 错误（磁盘满、权限不足、路径不存在等） | 对应的标准 `System.IO` 异常（`IOException`/`UnauthorizedAccessException`/`DirectoryNotFoundException` 等），未经封装直接向上抛出 |
 
 HRESULT 速查（常见的几个）：
@@ -351,6 +408,52 @@ HRESULT 速查（常见的几个）：
 
 找不到原生库时会抛 `System.DllNotFoundException: Unable to load DLL '7zlite'...`，这是 .NET
 内置异常，不是本库自定义的。
+
+### ⚠️ Android 平台额外要求：必须切到 CoreCLR 运行时（`UseMonoRuntime=false`）
+
+本库的互操作层基于 .NET 8+ 的 Source-Generated COM（`[GeneratedComInterface]`/
+`[GeneratedComClass]`，底层依赖 `System.Runtime.InteropServices.ComWrappers`）。
+**`.NET for Android` 默认使用的 Mono 运行时完全不支持 `ComWrappers`**（MS Learn 官方 API 文档对
+`ComWrappers` 类标注了 `[UnsupportedOSPlatform("android")]`），不管是 MAUI、Avalonia for
+Android，还是任何其他基于 `.NET for Android` SDK 的宿主项目，只要用 Mono 运行时调用本库的任意
+`CreateArchive`/`List`/`ExtractAll`/`SevenZipArchiveEditor` 方法，都会在
+`ComWrappers.GetOrCreateObjectForComInstance` 处抛出：
+
+```
+System.PlatformNotSupportedException: Operation is not supported on this platform.
+   at System.Runtime.InteropServices.ComWrappers.GetOrCreateObjectForComInstance(...)
+   at SevenZipLite.Native.ComFactory.GetRcw(...)
+```
+
+**这不是本库的 bug，也不是某个具体 API 的问题——不管换成哪个创建/读取方法，Android 默认运行时下
+必现。** 修复方式是在你的 Android 宿主项目（`.csproj`）里显式切换到 .NET 10 引入的
+**实验性** CoreCLR 运行时：
+
+```xml
+<PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <!-- CoreCLR 要求 API 24（Android 7.0 Nougat）及以上，默认模板给的 21 需要调高 -->
+    <SupportedOSPlatformVersion>24.0</SupportedOSPlatformVersion>
+    <UseMonoRuntime>false</UseMonoRuntime>
+</PropertyGroup>
+```
+
+前提/限制：
+- **必须是 `net10.0-android` 或更高**——`UseMonoRuntime=false` 这个开关是 .NET 10 才引入的，
+  `net8.0-android`/`net9.0-android` 上这个属性不存在，不会生效。
+- **只支持 64 位 ABI**：`arm64-v8a`/`x86_64`（emulator 常见的两种），**不支持**
+  `armeabi-v7a`/`x86` 这两个 32 位 ABI——CoreCLR 根本没有对应的运行时包，真机/模拟器是 32 位
+  架构的话这条路走不通。
+- 截至 .NET 10，这仍是官方明确标注的**实验性、不建议用于生产环境**的功能（包体积更大、部分调试/
+  诊断能力不完整）；根据官方路线图，.NET 11 起 CoreCLR 会转正为 Android/iOS/Mac Catalyst 的
+  默认运行时，Mono 变成需要显式选择的兼容选项，届时这个限制会自然消失。
+- 改完属性后务必做一次**彻底干净重建**（删 `bin`/`obj`，模拟器上 `adb uninstall` 卸载旧 APK，
+  再重新 build+deploy）——仅仅改属性不清缓存，有可能继续装着改动前编译出的旧 Mono 版 APK，
+  表现成"改了还是不行"。可以解包新生成的 APK 确认是否真的切到了 CoreCLR：
+  `unzip -l <apk 路径> | grep -E "libcoreclr|libmonosgen"`，看到 `libcoreclr.so` 而不是
+  `libmonosgen-2.0.so` 才说明真的生效了。
+
+更详细的真机问题排查记录（含官方证据链接）见
+[`docs/investigation-report.zh-CN.md`](./investigation-report.zh-CN.md) 第 8.7 节。
 
 ## `SevenZipLite.SelfTest`（可选：测试/基准工具）
 

@@ -14,6 +14,21 @@ public sealed class UpdateSourceItem
     public DateTime? MTime { get; init; }
 
     /// <summary>
+    /// 非 null 时表示"这个条目的内容来自一个按需打开的 <see cref="Stream"/>，而不是磁盘文件"——
+    /// 每次 <see cref="UpdateCallback.GetStream"/> 需要读取这个条目的内容时都会调用一次这个委托，
+    /// 拿到一个新的、从头开始的、**必须支持 Seek** 的只读流（native 7-Zip 在压缩过程中会对
+    /// 输入流调用 Seek，详见 <see cref="SevenZipLite.Streams.ComInStream"/>）；多线程压缩下不保证
+    /// 每个条目只被调用一次（理论上和磁盘路径分支一样最多一次，但委托形式更容易被误用于"只能被
+    /// 消费一次的流"，调用方需要确保每次调用都能拿到一个独立可读的流，比如每次都 new 一个
+    /// <see cref="MemoryStream"/>，或者对可重复定位的底层资源每次重新 Seek(0) 后返回同一个实例）。
+    /// 与 <see cref="DiskPath"/> 互斥，两者必须且只能设置一个；设置这个字段时 <see cref="Size"/>
+    /// 必须等于流的真实长度（native 在调用 <see cref="UpdateCallback.GetStream"/> 之前就已经通过
+    /// <see cref="UpdateCallback.GetProperty"/> 读取过 kpidSize 并写入归档头，之后再读到长度不一致
+    /// 的实际数据会导致归档损坏，这里不会也无法在 Open 时校验这件事，调用方必须自行保证准确）。
+    /// </summary>
+    public Func<Stream>? OpenStream { get; init; }
+
+    /// <summary>
     /// 非 null 时表示"这个条目保持不变，原样从正在更新的旧归档里按这个下标复制过来"
     /// （native 内部直接从 <see cref="ArchiveOpenCallback"/>/<c>IInArchive.Open</c> 时的输入流里
     /// 读取原始压缩字节重新写一份，不经过我们的 <see cref="UpdateCallback"/>.GetStream/<see cref="UpdateCallback"/>.GetProperty，
@@ -197,10 +212,26 @@ internal sealed partial class UpdateCallback : IArchiveUpdateCallback, ICryptoGe
         if (_cancellationToken.IsCancellationRequested) return HResult.E_ABORT;
 
         var item = _items[(int)index];
-        if (item.IsDir || item.DiskPath is null) return HResult.S_OK;
+        if (item.IsDir) return HResult.S_OK;
 
-        var fs = new FileStream(item.DiskPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        var adapter = new ComInStream(fs);
+        Stream source;
+        if (item.OpenStream is not null)
+        {
+            // Stream 来源的条目：调用方提供的委托负责打开/定位到可读起点，这里不关心它是
+            // MemoryStream 还是别的什么 Stream 实现，唯一的硬性要求是必须支持 Seek
+            // （ComInStream 的构造函数和 Seek 方法都依赖这一点）。
+            source = item.OpenStream();
+        }
+        else if (item.DiskPath is not null)
+        {
+            source = new FileStream(item.DiskPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        }
+        else
+        {
+            return HResult.S_OK;
+        }
+
+        var adapter = new ComInStream(source);
         _pendingStreams.Add(adapter); // 统一延迟到 Dispose() 里关闭，理由见类型注释
         inStream = ComFactory.GetCcw<IInStream>(adapter);
         return HResult.S_OK;

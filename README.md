@@ -1,4 +1,4 @@
-﻿# SevenZipLite
+# SevenZipLite
 
 [![License: LGPL v2.1+](https://img.shields.io/badge/license-LGPL--2.1--or--later-blue.svg)](./LICENSE)
 [![NuGet](https://img.shields.io/badge/nuget-SevenZipLite.Native-blue)](https://www.nuget.org/packages/SevenZipLite.Native)
@@ -34,7 +34,9 @@
   官方 `7z`/`7za` 命令行完全一致。
 - **四种归档格式**：7z、zip、tar、tar.gz 的创建与解压。
 - **分卷归档**：创建/读取多卷 `.7z.001`/`.002`… 归档。
-- **密码保护**：7z（AES-256 全归档加密）、zip（ZipCrypto/AES）密码保护。
+- **密码保护**：7z（AES-256 全归档加密）、zip（ZipCrypto/AES）密码保护。7z 密码保护默认
+  （`encryptHeaders: true`）会同时加密归档头（文件名/大小/目录结构），不传密码连
+  `List()` 浏览文件名都不行——可显式传 `encryptHeaders: false` 退回"仅加密内容"的旧行为。
 - **多线程压缩**：可控制压缩线程数（`threadCount` 参数），充分利用多核 CPU。
 - **zip 压缩方法可选**：`Store`（不压缩）或 `Deflate`。
 - **三平台验证**：Windows（x64/x86/arm64）、Linux（x64）、Android（arm64-v8a/armeabi-v7a/
@@ -47,6 +49,10 @@
 - **`SevenZipArchiveEditor`：对已有 7z/zip 归档做增量增删条目**，`using` 管理生命周期，基于
   7-Zip 原生"保留未改动条目、只重新编码新增条目"机制，不需要整体重新打包（仅支持 7z/zip，
   不支持分卷）。
+- **打包/解压直接对接 `Stream`，不强制要求磁盘文件**：`Entry.OpenStream`/`Length` 可以替代
+  `DiskPath`，条目内容直接来自内存/网络等来源；`SevenZipArchive.ExtractEntryToStream`/
+  `ExtractEntryBytes` 可以把归档内单个条目直接解压到调用方提供的 `Stream`（或拿到
+  `byte[]`），不需要先落盘再读回来（调用方的流需要支持 `Seek`）。
 - **无额外托管依赖**：核心库只依赖 .NET BCL，不引入第三方压缩/COM 互操作包。
 - **多目标框架**：核心库同时支持 **`net8.0`**（当前 LTS）与 **`net10.0`**，尚未升级到最新
   .NET 版本的项目也可以直接引用。
@@ -100,6 +106,9 @@ SevenZipArchive.ExtractAll(@"C:\out\backup.7z", ArchiveFormat.SevenZip, @"C:\res
 完整 API（含分卷、密码、zip 方法选择、多线程、异常处理、原生库加载细节）见
 [**API 文档**](./docs/api/SevenZipLite.md)（[English](./docs/api/SevenZipLite.en.md)）。
 
+> ⚠️ 目前 NuGet 包尚未发布到 nuget.org（发布计划见下文"发布"一节），可先通过
+> [`scripts/pack-nuget.sh`](./scripts/pack-nuget.sh) 本地打包后用本地源测试，或直接
+> `ProjectReference` 本仓库的 `src/SevenZipLite/SevenZipLite.csproj`。
 
 ## 项目结构
 
@@ -111,8 +120,9 @@ SevenZipLite/
 │   ├── SevenZipLite.SelfTest/     # 可复用的自测/性能/压力测试运行器（public API）
 │   └── SevenZipLite.Tests/        # Linux 控制台自测程序（--stress 跑压力测试）
 ├── samples/
-│   ├── SevenZipLite.AvaloniaDemo/ # 跨平台 Avalonia 可视化 Demo（Windows/Linux，Native AOT 发布）
-│   └── SevenZipLite.MauiDemo/     # .NET MAUI（Android）Demo
+│   ├── SevenZipLite.AvaloniaDemo/        # 跨平台 Avalonia 可视化 Demo（Windows/Linux，Native AOT 发布）
+│   ├── SevenZipLite.MauiDemo/            # .NET MAUI（Android）Demo
+│   └── SevenZipLite.AvaloniaAndroidDemo/ # Avalonia + Android 崩溃复现/诊断工具（非功能 Demo）
 ├── native/
 │   └── 7zip-src/                  # 官方未裁剪 7-Zip 源码（原样保留，用于本地编译原生库）
 ├── native-libs/                   # 各 RID 的编译产物（见其 README.md 的来源说明）
@@ -188,6 +198,21 @@ dotnet publish samples/SevenZipLite.AvaloniaDemo -c Release -r linux-x64 --self-
 dotnet build samples/SevenZipLite.MauiDemo -f net10.0-android -c Debug -t:Run
 ```
 
+### 运行 Avalonia + Android 崩溃复现/诊断工具
+
+`samples/SevenZipLite.AvaloniaAndroidDemo` 是一个专用的最小复现工具，不是功能 Demo——用法、
+每一步测试的意义、以及和"已知限制"里 CoreCLR 要求的关系，见该目录下的
+[`README.md`](./samples/SevenZipLite.AvaloniaAndroidDemo/README.md)。
+
+```bash
+# 先在桌面跑一遍排除法
+dotnet run --project samples/SevenZipLite.AvaloniaAndroidDemo/SevenZipLite.AvaloniaAndroidDemo.Desktop
+
+# 再在 Android 上跑（需要先 dotnet workload install android）
+dotnet build samples/SevenZipLite.AvaloniaAndroidDemo/SevenZipLite.AvaloniaAndroidDemo.Android \
+  -f net10.0-android -c Debug -t:Run
+```
+
 ## 测试
 
 - **正确性测试**：`SevenZipLite.SelfTest.SelfTestRunner.RunAll`，覆盖 7z/zip/tar/tar.gz ×
@@ -251,6 +276,16 @@ git push origin v1.0.0
   详见 API 文档对应章节。
 - MAUI/Android 的原生库自动分发不走 NuGet 包内置的 `build`/`buildTransitive` 机制，需要手动
   参照 `samples/SevenZipLite.MauiDemo` 接入（详见 API 文档"原生库加载与平台要求"一节）。
+- **Android 上必须显式切到 .NET 10 实验性 CoreCLR 运行时**（宿主项目 `.csproj` 里设置
+  `UseMonoRuntime=false`，且必须是 `net10.0-android` 及以上）——不管用 MAUI、Avalonia for
+  Android 还是其他 `.NET for Android` 宿主，默认的 Mono 运行时完全不支持本库互操作层依赖的
+  `System.Runtime.InteropServices.ComWrappers`，调用任意 `CreateArchive`/`List`/
+  `ExtractAll` 都会抛 `PlatformNotSupportedException`（堆栈定位在
+  `ComWrappers.GetOrCreateObjectForComInstance`）。详细原因、限制（仅 64 位 ABI）和具体改法见
+  API 文档"原生库加载与平台要求"一节里的 ⚠️ 小节；如果怀疑自己项目里遇到的就是这个问题
+  （或者改了 `UseMonoRuntime=false` 之后还有别的崩溃），可以用
+  `samples/SevenZipLite.AvaloniaAndroidDemo` 这个专门的最小复现/诊断工具隔离问题，不用再
+  在自己项目一堆业务代码和日志噪音里排查（用法见该目录下的 README.md）。
 - `native/7zip-src` 下暂时只有 `build_linux.sh`；`build_windows.*`/`build_android.*` 脚本尚不
   存在——Windows/Android 的原生库目前是手工获取/编译后直接放入 `native-libs/` 的，这是已知的
   待完善项，欢迎贡献对应脚本。

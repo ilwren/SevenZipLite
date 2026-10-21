@@ -2,7 +2,85 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)（[Semantic Versioning](https://semver.org/)）。
 
-## [Unreleased]
+## [0.1.7] - 2026-10-19
+
+### 新增 / Added
+- 打包/解压不再强制要求磁盘文件路径，新增对 `Stream` 的直接支持：
+  - `SevenZipCompressor.Entry` 新增 `OpenStream`（`Func<Stream>?`）、`Length`（`long?`）、
+    `LastWriteTimeUtc`（`DateTime?`）三个成员，作为 `DiskPath` 的替代——条目内容可以来自
+    内存（`MemoryStream`）或任何按需可重复打开的流，不需要先落盘成临时文件再压缩。
+    `DiskPath` 随之从 `required` 改为可选，但与 `OpenStream` 互斥：必须且只能设置两者之一，
+    设置 `OpenStream` 时必须同时提供准确的 `Length`（7-Zip 原生层在真正读取内容之前就需要
+    把大小写进归档头，无法事后从流推断）。`ValidateEntries` 相应扩展了校验分支，覆盖
+    “两者都未设置”“两者都设置”“设置了 OpenStream 但 Length 缺失/为负数”三种新增错误场景，
+    均抛出带具体下标的 `ArgumentException`。
+  - `SevenZipArchive` 新增 `ExtractEntryToStream(archivePath, format, entryPath, outputStream,
+    ...)`：把归档内单个条目的内容直接写进调用方提供的 `Stream`，不经过磁盘临时文件；以及
+    便捷封装 `ExtractEntryBytes(...)` 直接返回 `byte[]`。两者均有对应的 `*Async` 版本。
+    找不到指定条目抛 `FileNotFoundException`，条目是目录抛 `InvalidOperationException`。
+    `tar.gz` 内部会先解出临时 tar 再从中定位条目，对调用方透明。
+  - **硬性约束（两个方向共用）**：调用方提供的 `Stream` 必须支持 `Seek`（native 7-Zip 在
+    压缩/解压过程中都会对流调用 `Seek`，这是已有内部实现 `ComInStream`/`ComOutStream` 的
+    既有要求，不是新增限制）——不支持 `Seek` 的来源（比如原始网络流）需要调用方自己先缓冲
+    到 `MemoryStream` 或临时文件。
+  - 新增 13 条自检回归用例（`tests/SevenZipLite.SelfTest/StreamIoTestRunner.cs`），覆盖混合
+    `DiskPath`/`OpenStream` 条目创建归档、四种格式（7z/zip/tar/tar.gz）下 `ExtractEntryToStream`
+    往返校验、带密码场景、`ExtractEntryBytes` 便捷方法，以及上述全部新增校验分支的异常回归。
+
+### 文档 / Docs
+- `docs/api/SevenZipLite.md`/`.en.md` 更新 `Entry`、`CreateArchive`、`SevenZipArchive` 对应章节
+  和异常速查表，补充 `OpenStream`/`Length`/`LastWriteTimeUtc`/`ExtractEntryToStream`/
+  `ExtractEntryBytes` 的说明和示例代码。
+
+## [0.1.6] - 2026-10-19
+
+### 新增 / Added
+- `SevenZipCompressor.CreateArchive`（及内部走同一路径的 `CreateArchiveFromDirectory`/
+  `tar.gz`）现在会在真正开始压缩之前，对传入的 `entries` 列表做显式参数校验：`entries`
+  本身为 `null` 抛 `ArgumentNullException`；某一项的 `DiskPath`/`ArchivePath` 为
+  `null`/空字符串时抛出 `ArgumentException`，异常信息**包含具体是第几个条目**（如
+  `entries[2].DiskPath 为空...`）。此前这种情况会在内部调用 `FileInfo`/
+  `File.GetLastWriteTimeUtc` 时抛出一个完全不带上下文的 `ArgumentNullException`
+  （`"Value cannot be null. (Parameter 'path')"`），排查起来只能一条条加断点去试，尤其是
+  当路径是从外部来源（比如文件选择器/某种 Uri 转换逻辑）生成、在某种边缘情况下变成
+  `null` 却没有在调用处判空时。详见 `docs/api/SevenZipLite.md`/`.en.md` 里 `Entry`
+  和 `CreateArchive` 的更新说明，以及 `tests/SevenZipLite.SelfTest/
+  EntryValidationTestRunner.cs` 的回归用例。
+- 新增 `samples/SevenZipLite.AvaloniaAndroidDemo`：一个专用的 Avalonia + Android 崩溃复现/
+  诊断工具（非功能 Demo），帮助在自己项目里调用 SevenZipLite 遇到崩溃/闪退、但日志噪音太大
+  定位不到的用户，在最小环境里逐步复现并看到完整异常信息（含一个"硬崩溃也能留痕"的本地
+  面包屑日志机制）。Android 头项目已预置好 `UseMonoRuntime=false`/
+  `SupportedOSPlatformVersion=24.0` 这个 CoreCLR 切换。用法见该目录下的 README.md/README.en.md。
+
+### 文档 / Docs
+- 在 README/`docs/api/SevenZipLite.md`（中英文）里补充了一个此前只写在
+  `SevenZipLite.MauiDemo.csproj` 注释和调查报告里、但没有放进正式 API 文档的**通用性** Android
+  平台要求：任何基于 `.NET for Android` SDK 的宿主项目（不止 MAUI，Avalonia for Android 等同样
+  适用）都必须在 `net10.0-android` 及以上目标下显式设置 `UseMonoRuntime=false` 切到实验性
+  CoreCLR 运行时，否则调用本库任意方法都会在 `ComWrappers.GetOrCreateObjectForComInstance` 处
+  抛 `PlatformNotSupportedException`（Mono 运行时完全不支持 `ComWrappers`）。此前只有 MAUI 用户
+  能通过阅读 Demo 项目源码碰巧发现这个前提条件，现在任何平台的 Android 宿主项目使用者都能在
+  正式文档里直接看到。
+
+## [0.1.5] - 2026-10-15
+
+### ⚠️ 行为变更 / Behavior change
+- **7z 密码保护默认改为同时加密归档头（文件名/文件大小/目录结构等元数据）**，对应官方 7z
+  命令行的 `-mhe=on`。此前只加密文件内容，不加密归档头——这其实是官方 `7z.exe`/`7za`
+  本身的默认行为（只传 `-p<密码>` 不加 `-mhe=on` 不会加密文件名），但本库从未把这个开关
+  暴露出来，导致"设了密码的压缩包"其实谁都能看到里面有哪些文件、文件名是什么，只是打不开
+  内容——这是一个容易被忽略的直觉盲区，本库认为更安全的默认值更符合大多数调用方的真实预期，
+  所以反过来把默认值定为"加密"。
+  - `SevenZipCompressor.CreateArchive`/`CreateArchiveFromDirectory`（含 `*Async` 版本）和
+    `SevenZipArchiveEditor.Open`/`Create` 都新增了 `bool encryptHeaders = true` 参数；
+    仅在 `format == ArchiveFormat.SevenZip` 且提供了非空密码时才有意义，zip 格式本身不
+    支持这个能力（标准 zip 的加密只覆盖条目数据，中央目录里的文件名永远明文），传这个
+    参数对 zip 无效。
+  - **升级影响**：如果你的代码此前依赖"带密码的 7z 归档不传密码也能 `List()`/浏览文件名"
+    这个行为，升级后这个调用会抛出 `InvalidOperationException`（S_FALSE，头部需要密码才能
+    解析）——需要显式传 `encryptHeaders: false` 才能恢复旧行为。**对已经用旧版本创建好的
+    归档没有影响**（这个参数只影响新创建/新保存的归档；旧归档该怎么读还怎么读，密码该怎么
+    传还怎么传）。
 
 ## [0.1.4] - 2026-10-15
 

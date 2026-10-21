@@ -24,8 +24,36 @@ public static class SevenZipCompressor
 {
     public sealed class Entry
     {
-        public required string DiskPath { get; init; }
+        /// <summary>条目内容来自磁盘文件时的真实文件系统路径。与 <see cref="OpenStream"/>
+        /// 互斥，两者必须且只能设置一个。</summary>
+        public string? DiskPath { get; init; }
+
         public required string ArchivePath { get; init; } // 建议用 '/' 分隔
+
+        /// <summary>
+        /// 条目内容来自内存/网络等非磁盘文件来源时，用这个委托代替 <see cref="DiskPath"/>——
+        /// 压缩过程中每次需要读取这个条目的内容都会调用一次，必须返回一个从头开始、
+        /// **支持 Seek** 的只读流（native 7-Zip 压缩时会对输入流调用 Seek；不支持 Seek 的来源，
+        /// 比如原始网络流，请调用方自己先缓冲到 <see cref="MemoryStream"/> 或临时文件里，
+        /// 再用 <c>() =&gt; new MemoryStream(bytes)</c> 这种形式提供）。与 <see cref="DiskPath"/>
+        /// 互斥；设置这个字段时必须同时设置 <see cref="Length"/>。
+        /// </summary>
+        public Func<Stream>? OpenStream { get; init; }
+
+        /// <summary>
+        /// 仅在设置了 <see cref="OpenStream"/> 时必需：流的精确字节长度。7-Zip 的 native 层
+        /// 会在真正调用 GetStream 读取内容**之前**就通过 GetProperty 读走 kpidSize 并写入
+        /// 归档头，没有办法在拿到流之后才"回头"修正这个值，所以长度必须提前准确给出——
+        /// 如果和流的实际可读字节数不一致，会产生一个头部声明的大小和实际压缩数据对不上的
+        /// 损坏归档，且不会在压缩阶段报错（只会在之后解压校验、或某些严格校验工具打开时才
+        /// 暴露出来）。使用 <see cref="DiskPath"/> 时不需要设置，长度会自动从文件系统读取。
+        /// </summary>
+        public long? Length { get; init; }
+
+        /// <summary>仅在设置了 <see cref="OpenStream"/> 时可选：条目在归档里记录的修改时间
+        /// （UTC）。不设置时该条目不会写入 kpidMTime 属性。使用 <see cref="DiskPath"/> 时
+        /// 不需要设置，会自动从文件系统读取 <see cref="File.GetLastWriteTimeUtc(string)"/>。</summary>
+        public DateTime? LastWriteTimeUtc { get; init; }
     }
 
     private static Guid ClsidFor(ArchiveFormat format) => format switch
@@ -59,6 +87,20 @@ public static class SevenZipCompressor
     /// <param name="cancellationToken">可选的取消令牌；取消粒度是"条目之间"，正在压缩中的
     /// 单个条目无法从内部中途打断，详见 <see cref="Callbacks.UpdateCallback"/> 的说明。
     /// 取消后会抛出 <see cref="OperationCanceledException"/>。</param>
+    /// <param name="encryptHeaders">
+    /// 是否同时加密归档头（文件名/文件大小/目录结构等元数据），仅在 <c>format ==
+    /// ArchiveFormat.SevenZip</c> 且提供了非空 <paramref name="password"/> 时才有意义
+    /// （对应官方 7z 命令行的 <c>-mhe=on</c>；zip 格式本身不支持这个能力，标准 zip 的加密
+    /// 只覆盖每个条目的数据，中央目录里的文件名永远是明文，设置这个参数对 zip 无效）。
+    /// <para>
+    /// 默认 <c>true</c>——这是本库刻意选择的、和官方 7z.exe 命令行默认值（false，即
+    /// 只加密内容不加密文件头）相反的默认值：只给密码、不设置这个属性时，哪怕整个归档都
+    /// 加了密码，文件名/大小/目录结构这些元数据仍然不需要密码就能看到
+    /// （<see cref="SevenZipArchive.List"/> 不用密码也能跑通）——这是很多用户容易踩的
+    /// 直觉盲区，"加密压缩包"在大多数场景下的真实预期就是文件名也应该保密。如果你明确需要
+    /// 旧行为（比如希望别人不知道密码也能看到归档里有哪些文件），显式传 <c>false</c>。
+    /// </para>
+    /// </param>
     public static IReadOnlyList<string> CreateArchive(
         IReadOnlyList<Entry> entries,
         string outputArchivePath,
@@ -68,8 +110,11 @@ public static class SevenZipCompressor
         ZipMethodOverride? zipMethodOverride = null,
         int? threadCount = null,
         IProgress<SevenZipProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool encryptHeaders = true)
     {
+        ValidateEntries(entries);
+
         if (!format.SupportsPassword()) password = null;
 
         if (format == ArchiveFormat.TarGZip)
@@ -77,18 +122,100 @@ public static class SevenZipCompressor
             return CreateTarGz(entries, outputArchivePath, volumeSize, threadCount, progress, cancellationToken);
         }
 
-        var items = entries.Select(e => new UpdateSourceItem
+        var items = entries.Select(ToUpdateSourceItem).ToList();
+
+        return CreateCore(ClsidFor(format), items, outputArchivePath, password, volumeSize,
+            format == ArchiveFormat.Zip ? zipMethodOverride : null, threadCount, progress, cancellationToken,
+            encryptHeaders);
+    }
+
+    /// <summary>
+    /// 在真正开始压缩之前，对 <paramref name="entries"/> 里每一条做显式校验，遇到空
+    /// DiskPath/ArchivePath 时抛出带具体下标的 <see cref="ArgumentException"/>。
+    /// <para>
+    /// 存在的意义：如果不做这层校验，下面构造 <c>UpdateSourceItem</c> 时的
+    /// <c>new FileInfo(e.DiskPath)</c>/<c>File.GetLastWriteTimeUtc(e.DiskPath)</c> 在
+    /// DiskPath 为 null 时会直接抛 .NET BCL 的 <see cref="ArgumentNullException"/>
+    /// （典型信息就是 "Value cannot be null. (Parameter 'path')"）——这条信息完全不会告诉你
+    /// 是列表里第几条 Entry 出的问题、ArchivePath 是什么，排查起来只能一条条加断点去试。
+    /// 常见触发场景：自己拼 Entry 列表时某个分支忘了赋值；或者路径来自 Android 文件选择器/
+    /// 某种 URI 转换逻辑，在取不到真实文件系统路径时返回了 null 却没有在调用处判空
+    /// （比如拿到 content:// 风格的虚拟 Uri，<c>TryGetLocalPath()</c> 返回 null 的情况）。
+    /// </para>
+    /// </summary>
+    private static void ValidateEntries(IReadOnlyList<Entry> entries)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+
+        for (int i = 0; i < entries.Count; i++)
+        {
+            var e = entries[i];
+            if (e is null)
+                throw new ArgumentException($"entries[{i}] 本身为 null。", nameof(entries));
+
+            bool hasDiskPath = !string.IsNullOrEmpty(e.DiskPath);
+            bool hasOpenStream = e.OpenStream is not null;
+
+            if (!hasDiskPath && !hasOpenStream)
+            {
+                throw new ArgumentException(
+                    $"entries[{i}].DiskPath 和 entries[{i}].OpenStream 都为空，ArchivePath=\"{e.ArchivePath}\"。" +
+                    "必须设置其中一个来提供条目内容：DiskPath 必须是一个真实存在、能被 File.OpenRead " +
+                    "直接打开的文件系统路径——如果这个路径是从文件选择器/某种 Uri 转换而来，常见原因是" +
+                    "拿到的其实是一个无法直接当文件路径用的虚拟 Uri（比如 Android 的 content:// 风格路径），" +
+                    "需要先把内容拷贝到一个真实的临时文件，再把那个临时文件路径传进来；或者设置 OpenStream " +
+                    "改为从内存/其他来源提供内容。",
+                    nameof(entries));
+            }
+
+            if (hasDiskPath && hasOpenStream)
+            {
+                throw new ArgumentException(
+                    $"entries[{i}] 同时设置了 DiskPath 和 OpenStream，ArchivePath=\"{e.ArchivePath}\"。" +
+                    "两者互斥，只能设置其中一个——DiskPath 表示内容来自磁盘文件，OpenStream 表示内容" +
+                    "来自调用方提供的 Stream，同时设置会产生歧义。",
+                    nameof(entries));
+            }
+
+            if (hasOpenStream && (e.Length is null || e.Length < 0))
+            {
+                throw new ArgumentException(
+                    $"entries[{i}] 设置了 OpenStream 但 Length 未设置或为负数，ArchivePath=\"{e.ArchivePath}\"。" +
+                    "7-Zip 原生层会在读取内容之前就需要准确的大小写入归档头，无法事后从流本身推断，" +
+                    "必须显式设置 Length 为流的精确字节长度。",
+                    nameof(entries));
+            }
+
+            if (string.IsNullOrEmpty(e.ArchivePath))
+            {
+                throw new ArgumentException(
+                    $"entries[{i}].ArchivePath 为空（null 或空字符串），DiskPath=\"{e.DiskPath}\"。" +
+                    "ArchivePath 是归档内的相对路径，不能为空。",
+                    nameof(entries));
+            }
+        }
+    }
+
+    /// <summary>把一个 <see cref="Entry"/> 转换成底层 <see cref="UpdateSourceItem"/>：按
+    /// DiskPath/OpenStream 两条分支分别取 Size/MTime，供 <see cref="CreateArchive"/> 和
+    /// <see cref="CreateTarGz"/> 共用，避免两处各写一份、容易改一个漏改另一个。</summary>
+    private static UpdateSourceItem ToUpdateSourceItem(Entry e) => e.OpenStream is not null
+        ? new UpdateSourceItem
+        {
+            ArchivePath = e.ArchivePath,
+            IsDir = false,
+            OpenStream = e.OpenStream,
+            Size = e.Length!.Value,
+            MTime = e.LastWriteTimeUtc
+        }
+        : new UpdateSourceItem
         {
             ArchivePath = e.ArchivePath,
             IsDir = false,
             DiskPath = e.DiskPath,
-            Size = new FileInfo(e.DiskPath).Length,
-            MTime = File.GetLastWriteTimeUtc(e.DiskPath)
-        }).ToList();
-
-        return CreateCore(ClsidFor(format), items, outputArchivePath, password, volumeSize,
-            format == ArchiveFormat.Zip ? zipMethodOverride : null, threadCount, progress, cancellationToken);
-    }
+            Size = new FileInfo(e.DiskPath!).Length,
+            MTime = File.GetLastWriteTimeUtc(e.DiskPath!)
+        };
 
     /// <summary>
     /// <see cref="CreateArchive"/> 的异步版本。底层 native 调用本身是阻塞式的，这里只是用
@@ -105,10 +232,11 @@ public static class SevenZipCompressor
         ZipMethodOverride? zipMethodOverride = null,
         int? threadCount = null,
         IProgress<SevenZipProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool encryptHeaders = true)
         => Task.Run(
             () => CreateArchive(entries, outputArchivePath, format, password, volumeSize, zipMethodOverride,
-                threadCount, progress, cancellationToken),
+                threadCount, progress, cancellationToken, encryptHeaders),
             cancellationToken);
 
     /// <summary>
@@ -133,6 +261,7 @@ public static class SevenZipCompressor
     /// <param name="threadCount">压缩线程数，默认 null 时取 <see cref="Environment.ProcessorCount"/>。</param>
     /// <param name="progress">可选的进度回调，语义同 <see cref="CreateArchive"/>。</param>
     /// <param name="cancellationToken">可选的取消令牌，语义同 <see cref="CreateArchive"/>。</param>
+    /// <param name="encryptHeaders">是否同时加密归档头，语义和默认值同 <see cref="CreateArchive"/>。</param>
     /// <exception cref="DirectoryNotFoundException"><paramref name="sourceDirectory"/> 不存在。</exception>
     /// <exception cref="InvalidOperationException">目录下没有任何文件可压缩（目录为空，或者
     /// 全部被 <paramref name="filter"/> 排除掉了）。</exception>
@@ -147,7 +276,8 @@ public static class SevenZipCompressor
         ZipMethodOverride? zipMethodOverride = null,
         int? threadCount = null,
         IProgress<SevenZipProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool encryptHeaders = true)
     {
         var entries = DirectoryEntryBuilder.BuildEntries(sourceDirectory, includeBaseDirectory, filter);
         if (entries.Count == 0)
@@ -157,7 +287,7 @@ public static class SevenZipCompressor
         }
 
         return CreateArchive(entries, outputArchivePath, format, password, volumeSize, zipMethodOverride,
-            threadCount, progress, cancellationToken);
+            threadCount, progress, cancellationToken, encryptHeaders);
     }
 
     /// <summary><see cref="CreateArchiveFromDirectory"/> 的异步版本，语义同
@@ -173,16 +303,19 @@ public static class SevenZipCompressor
         ZipMethodOverride? zipMethodOverride = null,
         int? threadCount = null,
         IProgress<SevenZipProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool encryptHeaders = true)
         => Task.Run(
             () => CreateArchiveFromDirectory(sourceDirectory, outputArchivePath, format, includeBaseDirectory,
-                filter, password, volumeSize, zipMethodOverride, threadCount, progress, cancellationToken),
+                filter, password, volumeSize, zipMethodOverride, threadCount, progress, cancellationToken,
+                encryptHeaders),
             cancellationToken);
 
     private static IReadOnlyList<string> CreateCore(
         Guid clsid, List<UpdateSourceItem> items, string outputArchivePath, string? password, long volumeSize,
         ZipMethodOverride? zipMethodOverride = null, int? threadCount = null,
-        IProgress<SevenZipProgress>? progress = null, CancellationToken cancellationToken = default)
+        IProgress<SevenZipProgress>? progress = null, CancellationToken cancellationToken = default,
+        bool encryptHeaders = true)
     {
         int hr = NativeMethods.CreateObject(clsid, Guids.IID_IOutArchive, out nint ptr);
         if (hr != HResult.S_OK || ptr == 0)
@@ -201,13 +334,30 @@ public static class SevenZipCompressor
         // 兼容/调试用途。
         uint effectiveThreads = (uint)Math.Max(1, threadCount ?? Environment.ProcessorCount);
         var propNames = new List<string> { "mt" };
-        var propValues = new List<uint> { effectiveThreads };
+        var propValues = new List<PropVariant> { PropVariant.FromUInt32(effectiveThreads) };
         if (zipMethodOverride is { } methodOverride)
         {
             propNames.Add("m");
-            propValues.Add((uint)methodOverride);
+            propValues.Add(PropVariant.FromUInt32((uint)methodOverride));
         }
-        SetUInt32Properties(ptr, propNames, propValues);
+        // "he"（header encryption，对应官方 7z 命令行的 -mhe=on）只对 7z 格式有意义——zip
+        // 格式本身就不支持加密文件名/归档结构（标准 zip 的加密只覆盖每个条目的数据流，中央
+        // 目录里的文件名永远是明文，这是格式本身的限制，不是我们能通过属性打开的开关）。
+        // 不设置 "he" 时，7-Zip 默认行为是只加密内容、不加密归档头（和官方 7z.exe 命令行
+        // 只传 -p<password> 不加 -mhe=on 时的默认行为完全一致）——这意味着不加这个属性的话，
+        // 哪怕整个归档都加了密码，文件名/文件大小/目录结构这些元数据仍然任何人不用密码就能
+        // 看到（`SevenZipArchive.List` 不需要密码就能跑通）。这正是很多用户的直觉盲区：
+        // "设了密码的压缩包"不代表"文件名也保密了"，必须显式打开这个开关才行。
+        // 本库选择让 encryptHeaders 默认为 true（和官方 7z.exe 的默认值相反），因为"给压缩包
+        // 设了密码"场景下绝大多数调用方的真实预期就是"文件名也应该保密"，默认更安全、更不容易
+        // 被这个反直觉的行为坑到；确实需要旧行为（比如想在不知道密码的情况下也能浏览归档里有
+        // 哪些文件）可以显式传 encryptHeaders: false。
+        if (clsid == Guids.CLSID_7z && password is not null && encryptHeaders)
+        {
+            propNames.Add("he");
+            propValues.Add(PropVariant.FromBool(true));
+        }
+        SetProperties(ptr, propNames, propValues);
 
         using var split = new SplittingFileStream(outputArchivePath, volumeSize);
         var outAdapter = new ComOutStream(split, leaveOpen: true);
@@ -240,7 +390,21 @@ public static class SevenZipCompressor
 
     /// <summary>
     /// 批量调用 IOutArchive 上的 ISetProperties::SetProperties，一次性传入若干个
-    /// name/value(VT_UI4) 属性对。
+    /// name/value 属性对（value 可以是任意落在 PROPVARIANT 前 16 字节内的 VARTYPE，
+    /// 比如 VT_UI4/<see cref="PropVariant.FromUInt32"/> 或 VT_BOOL/
+    /// <see cref="PropVariant.FromBool"/>，调用方自己决定每个属性用哪个构造方法——这个方法
+    /// 本身只负责把已经构造好的 <see cref="PropVariant"/> 列表批量搬到 native 的连续内存
+    /// 数组里，不关心每一项具体是什么类型）。
+    ///
+    /// 原来（2026-09 刚实现多线程属性设置时）这个方法叫 <c>SetUInt32Properties</c>、只接受
+    /// <c>uint</c> 值，因为当时唯二用到的属性 "mt"（线程数）和 "m"（zip 压缩方法）都是
+    /// VT_UI4。后来新增 "he"（7z header encryption，见 <see cref="CreateCore"/> 里的用法）
+    /// 是 VT_BOOL，才把参数类型从 <c>IReadOnlyList&lt;uint&gt;</c> 泛化成
+    /// <see cref="PropVariant"/>——这是纯粹的签名泛化，不影响已有的 "mt"/"m" 调用方式，因为
+    /// <see cref="PropVariant.WriteToNative"/> 本来就是不管 vt 是什么、统一只拷贝前 16 字节。
+    /// 同时放宽成 <c>internal</c>（原先 <c>private</c>），好让 <see cref="SevenZipArchiveEditor"/>
+    /// 的 <c>SaveChanges</c> 复用同一套"安全地批量传 SetProperties"逻辑，不用再抄一份
+    /// PROPVARIANT 平台相关尺寸的处理代码。
     ///
     /// 必须批量传、不能分多次调用 SetProperties：native 侧每次 SetProperties 实现
     /// 开头都会先整体重置属性状态（例如 Zip 的 ZipHandler.h::InitMethodProps() 里
@@ -306,7 +470,7 @@ public static class SevenZipCompressor
     /// 或支持"解压多线程压缩出的归档"这类场景，需要先用类似的方式重新确认 native 侧的真实
     /// 调用时序，而不是想当然套用这里的结论。
     /// </summary>
-    private static unsafe void SetUInt32Properties(nint outArchivePtr, IReadOnlyList<string> names, IReadOnlyList<uint> values)
+    internal static unsafe void SetProperties(nint outArchivePtr, IReadOnlyList<string> names, IReadOnlyList<PropVariant> values)
     {
         if (names.Count != values.Count || names.Count == 0)
             throw new ArgumentException("names/values 数量必须一致且非空");
@@ -348,13 +512,12 @@ public static class SevenZipCompressor
             {
                 namePtrs[i] = Utf32Marshal.AllocW(names[i]);
                 Marshal.WriteIntPtr(namesArray, i * nint.Size, namePtrs[i]);
-                var pv = PropVariant.FromUInt32(values[i]);
                 // 每个 PropVariant 槽位清零后再写：不管步幅是 16 还是 24，PropVariant.WriteToNative
                 // 只写前 16 字节，槽位剩余部分（win-x64/arm64 下是最后 8 字节）必须清零而不是
-                // 保留 AllocHGlobal 给的未初始化垃圾——虽然 VT_UI4 的读取本不会用到这部分，
-                // 但清零是对"未定义行为"更保守、也更容易排查问题的做法。
+                // 保留 AllocHGlobal 给的未初始化垃圾——虽然 VT_UI4/VT_BOOL 的读取本不会用到
+                // 这部分，但清零是对"未定义行为"更保守、也更容易排查问题的做法。
                 new Span<byte>((void*)(valuesArray + i * propVariantSize), propVariantSize).Clear();
-                PropVariant.WriteToNative(valuesArray + i * propVariantSize, pv);
+                PropVariant.WriteToNative(valuesArray + i * propVariantSize, values[i]);
             }
 
             int hr = setProps.SetProperties(namesArray, valuesArray, (uint)n);
@@ -379,14 +542,7 @@ public static class SevenZipCompressor
         string tempTar = Path.Combine(Path.GetTempPath(), $"sevenziplite_{Guid.NewGuid():N}.tar");
         try
         {
-            var tarItems = entries.Select(e => new UpdateSourceItem
-            {
-                ArchivePath = e.ArchivePath,
-                IsDir = false,
-                DiskPath = e.DiskPath,
-                Size = new FileInfo(e.DiskPath).Length,
-                MTime = File.GetLastWriteTimeUtc(e.DiskPath)
-            }).ToList();
+            var tarItems = entries.Select(ToUpdateSourceItem).ToList();
             // 第一阶段：打包 tar（进度/取消接在这一步，见 SevenZipProgress 类型注释关于
             // tar.gz 两阶段各汇报一轮 0~100% 的说明）。
             CreateCore(Guids.CLSID_Tar, tarItems, tempTar, null, 0, threadCount: threadCount,

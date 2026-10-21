@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="SevenZipLite.AvaloniaAndroidDemo.Android/SevenZipLite.AvaloniaAndroidDemo.Android.csproj">
+    <Deploy />
+  </Project>
+  <Project Path="SevenZipLite.AvaloniaAndroidDemo.Desktop/SevenZipLite.AvaloniaAndroidDemo.Desktop.csproj" />
+  <Project Path="SevenZipLite.AvaloniaAndroidDemo/SevenZipLite.AvaloniaAndroidDemo.csproj" />
+</Solution>

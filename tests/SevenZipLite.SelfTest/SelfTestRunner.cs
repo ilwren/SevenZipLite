@@ -82,6 +82,16 @@ public static class SelfTestRunner
         // 见 ArchiveEditorTestRunner 类型注释。
         results.AddRange(ArchiveEditorTestRunner.RunAll(rootDir));
 
+        // 7z 头部加密（encryptHeaders）专项用例，见 HeaderEncryptionTestRunner 类型注释。
+        results.AddRange(HeaderEncryptionTestRunner.RunAll(rootDir));
+
+        // Entry.DiskPath/ArchivePath 显式参数校验专项用例，见 EntryValidationTestRunner 类型注释。
+        results.AddRange(EntryValidationTestRunner.RunAll(rootDir));
+
+        // Entry.OpenStream（压缩来源可以是 Stream）/ SevenZipArchive.ExtractEntryToStream
+        // （解压目标可以是 Stream）专项用例，见 StreamIoTestRunner 类型注释。
+        results.AddRange(StreamIoTestRunner.RunAll(rootDir));
+
         return results;
     }
 
@@ -100,8 +110,12 @@ public static class SelfTestRunner
             var volumes = SevenZipCompressor.CreateArchive(entries, archivePath, format, password, volumeSize, zipMethodOverride);
             log.Add($"生成文件: {string.Join(", ", volumes.Select(Path.GetFileName))}");
 
+            // 传 password：7z 格式从 0.1.4 起默认 encryptHeaders=true（见
+            // SevenZipCompressor.CreateArchive 的参数注释），意味着这里创建出来的带密码 7z
+            // 归档，不传密码是真的列不出条目的（IInArchive.Open 在解析头部阶段就会失败）——
+            // 这正是"加密压缩包要连文件名一起保密"这个修复生效的体现，不是 bug。
             string openTarget = volumeSize > 0 ? volumes[0] : archivePath;
-            var listed = SevenZipArchive.List(openTarget, format);
+            var listed = SevenZipArchive.List(openTarget, format, password);
             log.Add($"列出条目数: {listed.Count}");
 
             SevenZipArchive.ExtractAll(openTarget, format, extractDir, password);
@@ -121,7 +135,7 @@ public static class SelfTestRunner
         {
             string expected = Path.Combine(extractDir, e.ArchivePath.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(expected)) return false;
-            if (!File.ReadAllBytes(expected).SequenceEqual(File.ReadAllBytes(e.DiskPath))) return false;
+            if (!File.ReadAllBytes(expected).SequenceEqual(File.ReadAllBytes(e.DiskPath!))) return false;
         }
         return true;
     }

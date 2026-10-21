@@ -1,0 +1,97 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="900"
+             x:Class="SevenZipLite.AvaloniaAndroidDemo.Views.MainView">
+
+    <ScrollViewer>
+        <StackPanel Margin="16" Spacing="14">
+
+            <TextBlock Text="SevenZipLite · Avalonia 崩溃复现/诊断工具" FontSize="20" FontWeight="Bold" />
+            <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="Gray"
+                       Text="专用于定位“在 Avalonia + Android 项目里调用 SevenZipLite 创建压缩包时崩溃闪退”这个问题。每一步都单独按钮触发、单独显示结果，出异常不会让 App 崩掉——异常会被完整捕获并打印在下面对应的框里，而不是只能去翻一堆系统噪音的 adb logcat。" />
+
+            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="10">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="上次运行记录（如果上次是没打印任何异常就直接闪退的硬崩溃，这里能看到卡在哪一步）" FontWeight="Bold" FontSize="13" />
+                    <TextBox x:Name="PreviousRunText" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                             FontFamily="Consolas,Courier New,monospace" FontSize="11"
+                             MaxHeight="160" />
+                    <Button x:Name="ClearPreviousRunButton" Content="清空这份记录" Click="OnClearPreviousRunClicked" />
+                </StackPanel>
+            </Border>
+
+            <Separator />
+
+            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="10">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="0) 运行环境诊断（Mono / CoreCLR）" FontWeight="Bold" FontSize="14" />
+                    <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="Gray"
+                               Text="判断当前进程到底在用 Mono 还是 CoreCLR 运行时——Android 默认的 Mono 完全不支持 SevenZipLite 互操作层依赖的 ComWrappers，调用任何创建/读取方法都会抛 PlatformNotSupportedException。" />
+                    <Button x:Name="RefreshEnvButton" Content="刷新环境信息" Click="OnRefreshEnvClicked" />
+                    <TextBox x:Name="EnvInfoText" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                             FontFamily="Consolas,Courier New,monospace" FontSize="11" />
+                </StackPanel>
+            </Border>
+
+            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="10">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="1) 最小复现：SevenZipCompressor.CreateArchive（单文件、无密码、同步）" FontWeight="Bold" FontSize="14" />
+                    <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="Gray"
+                               Text="调用栈最短的一条路径——直接命中原生互操作层。如果这一步都崩，基本可以确定是 ComWrappers/运行时的问题，和你项目里具体怎么拼 Entry 列表、用什么密码、是否分卷都无关。" />
+                    <Button x:Name="TestCreateArchiveButton" Content="运行" Click="OnTestCreateArchiveClicked" />
+                    <TextBox x:Name="TestCreateArchiveResult" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                             FontFamily="Consolas,Courier New,monospace" FontSize="11" MinHeight="40" />
+                </StackPanel>
+            </Border>
+
+            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="10">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="2) SevenZipCompressor.CreateArchiveFromDirectory（同步）" FontWeight="Bold" FontSize="14" />
+                    <Button x:Name="TestCreateFromDirButton" Content="运行" Click="OnTestCreateFromDirClicked" />
+                    <TextBox x:Name="TestCreateFromDirResult" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                             FontFamily="Consolas,Courier New,monospace" FontSize="11" MinHeight="40" />
+                </StackPanel>
+            </Border>
+
+            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="10">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="3) SevenZipCompressor.CreateArchiveFromDirectoryAsync（异步）" FontWeight="Bold" FontSize="14" />
+                    <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="Gray"
+                               Text="这一步复刻的是最初报错堆栈里出现的确切调用路径（CreateArchiveFromDirectoryAsync → CreateArchiveFromDirectory → CreateArchive → CreateCore → ComFactory.GetRcw）。" />
+                    <Button x:Name="TestCreateFromDirAsyncButton" Content="运行" Click="OnTestCreateFromDirAsyncClicked" />
+                    <TextBox x:Name="TestCreateFromDirAsyncResult" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                             FontFamily="Consolas,Courier New,monospace" FontSize="11" MinHeight="40" />
+                </StackPanel>
+            </Border>
+
+            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="10">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="4) 完整自检（SelfTestRunner.RunAll，7z/zip/tar/tar.gz × 分卷 × 密码）" FontWeight="Bold" FontSize="14" />
+                    <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="Gray"
+                               Text="复用仓库自带的自检用例，覆盖面比上面几步更广——如果前面几步都通过但你自己项目里仍然崩，建议也跑一下这个，排查是不是密码/分卷/具体格式相关的边界情况。" />
+                    <Button x:Name="RunSelfTestButton" Content="运行自检" Click="OnRunSelfTestClicked" />
+                    <TextBox x:Name="SelfTestResult" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                             FontFamily="Consolas,Courier New,monospace" FontSize="11" MinHeight="100" />
+                </StackPanel>
+            </Border>
+
+            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="10">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="5)（可选，重点排查项）用你自己选的真实文件测试" FontWeight="Bold" FontSize="14" />
+                    <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="Gray"
+                               Text="如果上面用临时合成文件的测试全部通过，但你自己项目里用真实文件就崩，很可能是另一个完全不同的原因：Android 现代存储模型（Storage Access Framework）下，文件选择器返回的往往是 content:// 风格的虚拟 Uri，不是真正的文件系统路径，而 SevenZipCompressor.Entry.DiskPath 要求的是能被 File.Open 直接打开的真实路径。下面会明确告诉你选出来的路径是不是这种情况。" />
+                    <Button x:Name="PickRealFileButton" Content="选择一个真实文件" Click="OnPickRealFileClicked" />
+                    <TextBox x:Name="PickedFilePathText" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                             FontFamily="Consolas,Courier New,monospace" FontSize="11" MinHeight="40" />
+                    <Button x:Name="TestPickedFileButton" Content="用这个文件测试压缩" Click="OnTestPickedFileClicked" IsEnabled="False" />
+                    <TextBox x:Name="TestPickedFileResult" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                             FontFamily="Consolas,Courier New,monospace" FontSize="11" MinHeight="40" />
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+
+</UserControl>

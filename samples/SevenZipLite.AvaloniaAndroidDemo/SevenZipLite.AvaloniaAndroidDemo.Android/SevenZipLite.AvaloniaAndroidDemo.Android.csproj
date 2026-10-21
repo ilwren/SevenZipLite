@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- 必须是 net10.0-android 及以上：UseMonoRuntime=false 这个 CoreCLR 切换开关是 .NET 10
+         才引入的实验性功能，net8.0-android/net9.0-android 上不存在这个属性。 -->
+    <TargetFramework>net10.0-android</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ApplicationId>com.companyname.sevenziplite.avaloniaandroiddemo</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
+
+    <!--
+      =====================================================================================
+      这是本项目存在的核心原因，务必保留——详见 docs/investigation-report.zh-CN.md §8.7、
+      docs/api/SevenZipLite.md「原生库加载与平台要求」一节的 ⚠️ 小节。
+
+      .NET for Android 默认用 Mono 运行时，而 Mono 完全不支持 SevenZipLite 互操作层依赖的
+      System.Runtime.InteropServices.ComWrappers（MS Learn 官方文档对 ComWrappers 类标注了
+      [UnsupportedOSPlatform("android")]）。不管是这个 Avalonia Demo，还是 MAUI，还是任何
+      其他 .NET for Android 宿主，只要还在用默认的 Mono 运行时，调用 SevenZipLite 的任意
+      CreateArchive/List/ExtractAll 都会在 ComWrappers.GetOrCreateObjectForComInstance 处
+      抛 PlatformNotSupportedException。
+
+      修复：切到 .NET 10 引入的实验性 CoreCLR 运行时。限制：
+        - 只支持 64 位 ABI（arm64-v8a / x86_64），不支持 armeabi-v7a / x86；
+        - 要求 API 24（Android 7.0 Nougat）及以上；
+        - 截至 .NET 10 仍是官方标注的"实验性、不建议生产环境使用"的功能。
+      =====================================================================================
+    -->
+    <SupportedOSPlatformVersion>24.0</SupportedOSPlatformVersion>
+    <UseMonoRuntime>false</UseMonoRuntime>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AndroidResource Include="Icon.png">
+      <Link>Resources\drawable\Icon.png</Link>
+    </AndroidResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Android" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Xamarin.AndroidX.Core.SplashScreen" Version="1.2.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SevenZipLite.AvaloniaAndroidDemo\SevenZipLite.AvaloniaAndroidDemo.csproj" />
+  </ItemGroup>
+
+  <!--
+    原生库打包：跟 samples/SevenZipLite.MauiDemo 完全一样的套路——官方未裁剪 7-Zip 原生库
+    按 Android ABI 目录名分类存放在 NativeLibs/ 下（目录名必须是 arm64-v8a/armeabi-v7a/
+    x86_64/x86 这种 Android ABI 命名，<AndroidNativeLibrary> 靠父目录名自动识别 ABI，
+    不能改成 RID 风格命名），直接拷贝自仓库根 native-libs/android-*/，详见
+    native-libs/README.md。armeabi-v7a/x86 这两个 32 位 ABI 的 .so 虽然打进去了，但 CoreCLR
+    并不支持这两个 ABI（只有切回 UseMonoRuntime=true 时才用得上，仅为将来可能的回退路径保留）。
+  -->
+  <ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'android'">
+    <AndroidNativeLibrary Include="NativeLibs\arm64-v8a\lib7zlite.so" />
+    <AndroidNativeLibrary Include="NativeLibs\armeabi-v7a\lib7zlite.so" />
+    <AndroidNativeLibrary Include="NativeLibs\x86_64\lib7zlite.so" />
+    <AndroidNativeLibrary Include="NativeLibs\x86\lib7zlite.so" />
+  </ItemGroup>
+
+</Project>

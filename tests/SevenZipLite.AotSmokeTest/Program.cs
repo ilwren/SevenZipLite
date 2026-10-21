@@ -90,6 +90,40 @@ try
     }
     Console.WriteLine("[4/4] SevenZipArchiveEditor incremental add/delete + SaveChanges verified under AOT");
 
+    // 额外验证 7z 的 "he"（header encryption）属性设置路径——这是一条之前任何 AOT 冒烟测试
+    // 都没覆盖过的 ISetProperties::SetProperties(VT_BOOL) 调用（上面全程都是 zip，zip 不支持
+    // 头部加密，完全没走到这条代码路径）。同样的道理：编译期分析看不出 PROPVARIANT 的
+    // VT_BOOL 分支在真正的 Native AOT 产物里是否正确，必须实际跑一遍。
+    //
+    // Also exercise the 7z "he" (header encryption) property-setting path — a
+    // ISetProperties::SetProperties(VT_BOOL) call that no previous AOT smoke test covered
+    // (everything above used zip, which doesn't support header encryption at all, so that
+    // code path was never reached). Same rationale: static analysis cannot tell whether the
+    // PROPVARIANT VT_BOOL branch is correct in a real Native AOT build.
+    var sevenZipPath = Path.Combine(workDir, "out.7z");
+    SevenZipCompressor.CreateArchive(
+        new[] { new SevenZipCompressor.Entry { DiskPath = srcFile, ArchivePath = "hello.txt" } },
+        sevenZipPath,
+        ArchiveFormat.SevenZip,
+        password: "aot-smoke-pw"); // encryptHeaders 默认 true
+
+    bool listWithoutPasswordFailed = false;
+    try { SevenZipArchive.List(sevenZipPath, ArchiveFormat.SevenZip); }
+    catch (InvalidOperationException) { listWithoutPasswordFailed = true; }
+    if (!listWithoutPasswordFailed)
+    {
+        Console.Error.WriteLine("FAIL: 7z archive header should be encrypted by default (List() without a password should fail).");
+        return 1;
+    }
+
+    var sevenZipEntries = SevenZipArchive.List(sevenZipPath, ArchiveFormat.SevenZip, "aot-smoke-pw");
+    if (sevenZipEntries.Count != 1 || sevenZipEntries[0].Path != "hello.txt")
+    {
+        Console.Error.WriteLine($"FAIL: unexpected 7z entry list with correct password (count={sevenZipEntries.Count})");
+        return 1;
+    }
+    Console.WriteLine("[5/5] 7z header encryption (encryptHeaders default) verified under AOT");
+
     Console.WriteLine("AOT SMOKE TEST: PASS");
     return 0;
 }

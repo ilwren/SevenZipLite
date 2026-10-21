@@ -70,10 +70,12 @@ public sealed class SevenZipArchiveEditor : IDisposable
     private readonly ArchiveFormat _format;
     private readonly string? _password;
     private readonly Guid _clsid;
+    private readonly bool _encryptHeaders;
 
     // "已经保存在磁盘上"的基准状态；Open()/SaveChanges() 成功后（重新）建立。
     private IInArchive? _inArchive;
     private IOutArchive? _outArchive;
+    private nint _outArchivePtr; // 和 _outArchive 配套的原始 native 指针，SaveChanges 时用来调 ISetProperties
     private FileStream? _inputStream;
     private List<ExtractItemInfo> _baseItems = new();
     private bool _hasBaseArchive;
@@ -84,20 +86,31 @@ public sealed class SevenZipArchiveEditor : IDisposable
 
     private bool _disposed;
 
-    private SevenZipArchiveEditor(string archivePath, ArchiveFormat format, string? password)
+    private SevenZipArchiveEditor(string archivePath, ArchiveFormat format, string? password, bool encryptHeaders)
     {
         _clsid = ClsidFor(format); // 先校验格式，不支持的格式在这里就抛异常
         _archivePath = Path.GetFullPath(archivePath);
         _format = format;
         _password = format.SupportsPassword() ? password : null;
+        _encryptHeaders = encryptHeaders;
     }
 
     /// <summary>打开一个已存在的 7z/zip 归档用于增量编辑。</summary>
+    /// <param name="archivePath">要打开的归档路径。</param>
+    /// <param name="format">归档格式，仅支持 7z/zip。</param>
+    /// <param name="password">可选密码。</param>
+    /// <param name="encryptHeaders">
+    /// 每次 <see cref="SaveChanges"/> 写回磁盘时，是否同时加密归档头（文件名/大小/目录结构等
+    /// 元数据），语义和默认值同 <see cref="SevenZipCompressor.CreateArchive"/> 的同名参数
+    /// （仅在 <c>format == ArchiveFormat.SevenZip</c> 且提供了密码时有意义，默认 <c>true</c>，
+    /// 和官方 7z.exe 命令行的默认值相反，因为"设了密码的压缩包"的直觉预期通常是文件名也保密）。
+    /// </param>
     /// <exception cref="NotSupportedException"><paramref name="format"/> 不是 7z/zip。</exception>
     /// <exception cref="FileNotFoundException"><paramref name="archivePath"/> 不存在。</exception>
-    public static SevenZipArchiveEditor Open(string archivePath, ArchiveFormat format, string? password = null)
+    public static SevenZipArchiveEditor Open(
+        string archivePath, ArchiveFormat format, string? password = null, bool encryptHeaders = true)
     {
-        var editor = new SevenZipArchiveEditor(archivePath, format, password);
+        var editor = new SevenZipArchiveEditor(archivePath, format, password, encryptHeaders);
         if (!File.Exists(editor._archivePath))
             throw new FileNotFoundException($"归档不存在: {archivePath}", editor._archivePath);
 
@@ -111,12 +124,14 @@ public sealed class SevenZipArchiveEditor : IDisposable
     /// <see cref="AddFile"/>/<see cref="AddDirectory(string, bool, Func{string, bool}?)"/> 排队
     /// 要写入的内容，第一次 <see cref="SaveChanges"/> 时才会真正创建这个文件（如果
     /// <paramref name="archivePath"/> 处已经有文件，会被直接覆盖，语义同
-    /// <see cref="SevenZipCompressor.CreateArchive"/>）。
+    /// <see cref="SevenZipCompressor.CreateArchive"/>）。<paramref name="encryptHeaders"/>
+    /// 的语义见 <see cref="Open"/> 的参数说明。
     /// </summary>
     /// <exception cref="NotSupportedException"><paramref name="format"/> 不是 7z/zip。</exception>
-    public static SevenZipArchiveEditor Create(string archivePath, ArchiveFormat format, string? password = null)
+    public static SevenZipArchiveEditor Create(
+        string archivePath, ArchiveFormat format, string? password = null, bool encryptHeaders = true)
     {
-        var editor = new SevenZipArchiveEditor(archivePath, format, password);
+        var editor = new SevenZipArchiveEditor(archivePath, format, password, encryptHeaders);
         editor._hasBaseArchive = false;
         return editor;
     }
@@ -176,7 +191,8 @@ public sealed class SevenZipArchiveEditor : IDisposable
     {
         ThrowIfDisposed();
         var entries = DirectoryEntryBuilder.BuildEntries(sourceDirectory, includeBaseDirectory, filter);
-        foreach (var entry in entries) AddFile(entry.DiskPath, entry.ArchivePath);
+        // DirectoryEntryBuilder 只会产出磁盘路径条目（从不设置 OpenStream），DiskPath 必然非空。
+        foreach (var entry in entries) AddFile(entry.DiskPath!, entry.ArchivePath);
         return entries.Count;
     }
 
@@ -322,7 +338,24 @@ public sealed class SevenZipArchiveEditor : IDisposable
                 using var updateCb = new UpdateCallback(finalItems, _password, progress, cancellationToken);
                 nint cbCcw = ComFactory.GetCcw<IArchiveUpdateCallback>(updateCb);
 
-                IOutArchive writer = _hasBaseArchive ? _outArchive! : CreateFreshOutArchive();
+                (IOutArchive writer, nint writerPtr) = _hasBaseArchive
+                    ? (_outArchive!, _outArchivePtr)
+                    : CreateFreshOutArchive(_clsid);
+
+                // 和 SevenZipCompressor.CreateCore 同一套属性设置（"mt" 线程数 + 按条件
+                // 的 "he" 归档头加密），详见 SevenZipCompressor.SetProperties 的类型注释和
+                // CreateCore 里 "he" 那段注释——这里复用同一个方法，保证两条创建/写入路径的
+                // 加密语义完全一致，不会出现"一个默认加密文件头、另一个默认不加密"的不一致。
+                uint effectiveThreads = (uint)Math.Max(1, Environment.ProcessorCount);
+                var propNames = new List<string> { "mt" };
+                var propValues = new List<PropVariant> { PropVariant.FromUInt32(effectiveThreads) };
+                if (_format == ArchiveFormat.SevenZip && _password is not null && _encryptHeaders)
+                {
+                    propNames.Add("he");
+                    propValues.Add(PropVariant.FromBool(true));
+                }
+                SevenZipCompressor.SetProperties(writerPtr, propNames, propValues);
+
                 int hr = writer.UpdateItems(outCcw, (uint)finalItems.Count, cbCcw);
                 Check(hr, "IOutArchive.UpdateItems", cancellationToken);
             }
@@ -358,12 +391,12 @@ public sealed class SevenZipArchiveEditor : IDisposable
 
     // ---------------- 内部实现 ----------------
 
-    private IOutArchive CreateFreshOutArchive()
+    private static (IOutArchive, nint) CreateFreshOutArchive(Guid clsid)
     {
-        int hr = NativeMethods.CreateObject(_clsid, Guids.IID_IOutArchive, out nint ptr);
+        int hr = NativeMethods.CreateObject(clsid, Guids.IID_IOutArchive, out nint ptr);
         if (hr != HResult.S_OK || ptr == 0)
             throw new InvalidOperationException($"CreateObject(IOutArchive) 失败, HRESULT=0x{hr:X8}");
-        return ComFactory.GetRcw<IOutArchive>(ptr);
+        return (ComFactory.GetRcw<IOutArchive>(ptr), ptr);
     }
 
     private void OpenBase()
@@ -409,6 +442,7 @@ public sealed class SevenZipArchiveEditor : IDisposable
 
         _inArchive = inArchive;
         _outArchive = outArchive;
+        _outArchivePtr = outPtr;
         _inputStream = fileStream;
         _baseItems = SevenZipArchive.ListOpened(inArchive);
     }
@@ -422,6 +456,7 @@ public sealed class SevenZipArchiveEditor : IDisposable
         }
         _inArchive = null;
         _outArchive = null;
+        _outArchivePtr = 0;
         _inputStream?.Dispose();
         _inputStream = null;
     }

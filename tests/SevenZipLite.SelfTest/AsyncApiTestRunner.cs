@@ -182,7 +182,7 @@ public static class AsyncApiTestRunner
         {
             string expected = Path.Combine(extractDir, e.ArchivePath.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(expected)) return false;
-            if (!File.ReadAllBytes(expected).SequenceEqual(File.ReadAllBytes(e.DiskPath))) return false;
+            if (!File.ReadAllBytes(expected).SequenceEqual(File.ReadAllBytes(e.DiskPath!))) return false;
         }
         return true;
     }

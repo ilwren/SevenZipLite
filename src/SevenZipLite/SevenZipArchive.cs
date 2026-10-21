@@ -211,6 +211,127 @@ public static class SevenZipArchive
             () => ExtractAll(archivePathOrFirstVolume, format, outputDir, password, progress, cancellationToken),
             cancellationToken);
 
+    /// <summary>
+    /// 把归档内指定的单个条目解压到调用方提供的 <paramref name="outputStream"/>（而不是写到磁盘上的
+    /// 某个文件），用于"归档内容直接喂给内存/网络/另一个处理管线"的场景，不需要先落盘再读回来。
+    /// </summary>
+    /// <param name="archivePathOrFirstVolume">归档路径；语义同 <see cref="ExtractAll"/>。</param>
+    /// <param name="format">归档格式；tar.gz 内部会先解出临时 tar 再从其中定位条目（见
+    /// <see cref="ExtractInnerTarToTemp"/>），对调用方透明。</param>
+    /// <param name="entryPath">要提取的条目在归档内的路径，必须和 <see cref="List"/> 返回的
+    /// <see cref="ExtractItemInfo.Path"/> 完全一致（按 '/' 分隔，区分大小写）；可以用 '\' 分隔传入，
+    /// 会被自动归一化成 '/'。</param>
+    /// <param name="outputStream">目标流，必须可写且**支持 Seek**（native 7-Zip 解压时会对输出流
+    /// 调用 Seek，详见 <see cref="Streams.ComOutStream"/>）；这个流的生命周期完全由调用方管理，
+    /// 本方法不会关闭它。</param>
+    /// <param name="password">可选密码（仅 7z/zip 生效）。</param>
+    /// <param name="progress">可选的进度回调，语义同 <see cref="ExtractAll"/>。</param>
+    /// <param name="cancellationToken">可选的取消令牌，语义同 <see cref="ExtractAll"/>。</param>
+    /// <exception cref="FileNotFoundException">归档内找不到 <paramref name="entryPath"/> 对应的条目。</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="entryPath"/> 指向一个目录
+    /// （目录没有内容可以写入流）。</exception>
+    public static void ExtractEntryToStream(
+        string archivePathOrFirstVolume, ArchiveFormat format, string entryPath, Stream outputStream,
+        string? password = null, IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(outputStream);
+        if (string.IsNullOrEmpty(entryPath))
+            throw new ArgumentException("entryPath 不能为空。", nameof(entryPath));
+
+        string normalizedEntryPath = entryPath.Replace('\\', '/');
+
+        if (format == ArchiveFormat.TarGZip)
+        {
+            // tar.gz 只有一条内层流（整个 tar），真正的条目列表在这个内层 tar 里——先解出临时
+            // tar 文件，再对它递归调用一次本方法（format=Tar），用完即删，对调用方完全透明。
+            string tempTar = ExtractInnerTarToTemp(archivePathOrFirstVolume, cancellationToken: cancellationToken);
+            try
+            {
+                ExtractEntryToStream(tempTar, ArchiveFormat.Tar, normalizedEntryPath, outputStream,
+                    password: null, progress, cancellationToken);
+            }
+            finally { TryDelete(tempTar); }
+            return;
+        }
+
+        var volumes = JoinedVolumeStream.DiscoverVolumes(archivePathOrFirstVolume);
+        using var input = new JoinedVolumeStream(volumes);
+        var archive = CreateHandler(ClsidFor(format));
+        OpenStream(archive, input, password, cancellationToken);
+        try
+        {
+            var items = ListOpened(archive);
+            var match = items.Find(i => i.Path == normalizedEntryPath);
+            if (match is null)
+            {
+                throw new FileNotFoundException(
+                    $"归档内找不到条目: \"{entryPath}\"（归档共有 {items.Count} 个条目，注意路径分隔符" +
+                    "统一用 '/'、区分大小写，必须和 List() 返回的 Path 完全一致）。", entryPath);
+            }
+            if (match.IsDir)
+            {
+                throw new InvalidOperationException(
+                    $"\"{entryPath}\" 是一个目录条目，没有内容可以解压到 Stream。");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            using var extractCb = new StreamExtractCallback(match.Index, outputStream, password, progress,
+                cancellationToken);
+            nint cbCcw = ComFactory.GetCcw<IArchiveExtractCallback>(extractCb);
+            int hr;
+            unsafe
+            {
+                uint idx = match.Index;
+                hr = archive.Extract((nint)(&idx), 1, 0, cbCcw);
+            }
+            Check(hr, "IInArchive.Extract", cancellationToken);
+        }
+        finally
+        {
+            archive.Close();
+        }
+    }
+
+    /// <summary>
+    /// <see cref="ExtractEntryToStream"/> 的异步版本，语义同 <see cref="ExtractAllAsync"/>
+    /// （<c>Task.Run</c> 线程池包装，不是真正的异步 I/O）。
+    /// </summary>
+    public static Task ExtractEntryToStreamAsync(
+        string archivePathOrFirstVolume, ArchiveFormat format, string entryPath, Stream outputStream,
+        string? password = null, IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+        => Task.Run(
+            () => ExtractEntryToStream(archivePathOrFirstVolume, format, entryPath, outputStream, password,
+                progress, cancellationToken),
+            cancellationToken);
+
+    /// <summary>
+    /// <see cref="ExtractEntryToStream"/> 的便捷封装：直接把条目内容解压成一个 <c>byte[]</c>
+    /// 返回，内部就是解压到一个 <see cref="MemoryStream"/> 再取 <see cref="MemoryStream.ToArray"/>——
+    /// 适合条目不大、想直接拿到内存里处理（而不是自己管理目标流）的场景；条目很大时请优先用
+    /// <see cref="ExtractEntryToStream"/> 搭配调用方自己的流，避免整个内容常驻内存。
+    /// </summary>
+    public static byte[] ExtractEntryBytes(
+        string archivePathOrFirstVolume, ArchiveFormat format, string entryPath,
+        string? password = null, IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var ms = new MemoryStream();
+        ExtractEntryToStream(archivePathOrFirstVolume, format, entryPath, ms, password, progress, cancellationToken);
+        return ms.ToArray();
+    }
+
+    /// <summary><see cref="ExtractEntryBytes"/> 的异步版本，语义同 <see cref="ExtractAllAsync"/>。</summary>
+    public static Task<byte[]> ExtractEntryBytesAsync(
+        string archivePathOrFirstVolume, ArchiveFormat format, string entryPath,
+        string? password = null, IProgress<SevenZipProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+        => Task.Run(
+            () => ExtractEntryBytes(archivePathOrFirstVolume, format, entryPath, password, progress,
+                cancellationToken),
+            cancellationToken);
+
     // ---------------- tar.gz 组合处理 ----------------
     // gzip 归档只包含一条内层流，不是文件系统树；tar.gz = gzip(tar(files))。
     // 因此 tar.gz 的读取需要两步：先用 GZip handler 把内层流解出到临时 .tar 文件，

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    这是一个专用的诊断/复现工具，目的单一：隔离用户在自己的 Avalonia + Android 项目里
+    调用 SevenZipLite 创建压缩包时遇到的崩溃，去掉用户自己项目里其余业务代码、日志噪音的
+    干扰。不是一个"示范最佳实践"的完整 Demo，所以刻意没有用 MVVM/{Binding}——跟
+    samples/SevenZipLite.AvaloniaDemo 的设计取舍一致：所有控件用 x:Name 具名引用 +
+    代码后置直接调用，让读者的注意力完全集中在 SevenZipLite 的调用和异常信息上。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="$(AvaloniaVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 指向仓库根的 src/SevenZipLite：跟你自己项目里引用方式（NuGet 包）的运行时行为完全
+         一致，只是本地开发用 ProjectReference 省去先打包再引用的步骤。 -->
+    <ProjectReference Include="..\..\..\src\SevenZipLite\SevenZipLite.csproj" />
+    <ProjectReference Include="..\..\..\tests\SevenZipLite.SelfTest\SevenZipLite.SelfTest.csproj" />
+  </ItemGroup>
+</Project>

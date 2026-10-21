@@ -1,4 +1,4 @@
-﻿# SevenZipLite
+# SevenZipLite
 
 [![License: LGPL v2.1+](https://img.shields.io/badge/license-LGPL--2.1--or--later-blue.svg)](./LICENSE)
 [![NuGet](https://img.shields.io/badge/nuget-SevenZipLite.Native-blue)](https://www.nuget.org/packages/SevenZipLite.Native)
@@ -38,7 +38,11 @@ official 7-Zip command-line tools.
   compatibility exactly match the official `7z`/`7za` CLI tools.
 - **Four archive formats**: create and extract 7z, zip, tar, tar.gz.
 - **Multi-volume archives**: create/read split `.7z.001`/`.002`... archives.
-- **Password protection**: 7z (full-archive AES-256 encryption), zip (ZipCrypto/AES).
+- **Password protection**: 7z (full-archive AES-256 encryption), zip (ZipCrypto/AES). 7z
+  password protection defaults to also encrypting the archive header
+  (`encryptHeaders: true`) — file names/sizes/directory structure stay unreadable without
+  the password too, so even `List()` requires it; pass `encryptHeaders: false` to restore
+  the old content-only-encryption behavior.
 - **Multi-threaded compression**: control the compression thread count (`threadCount`
   parameter) to make full use of multi-core CPUs.
 - **Selectable zip compression method**: `Store` (no compression) or `Deflate`.
@@ -54,6 +58,11 @@ official 7-Zip command-line tools.
 - **`SevenZipArchiveEditor`: incremental add/delete on an existing 7z/zip archive**, with
   `using`-managed lifetime, built on 7-Zip's native "keep unchanged entries, only re-encode new
   ones" mechanism — no full re-pack needed (7z/zip only, no multi-volume support).
+- **Pack/extract can work directly with `Stream`s, no disk file required**: `Entry.OpenStream`/
+  `Length` can replace `DiskPath` so entry content comes straight from memory/network/etc.;
+  `SevenZipArchive.ExtractEntryToStream`/`ExtractEntryBytes` can extract a single archive entry
+  straight into a caller-supplied `Stream` (or return a `byte[]`) without writing to disk first
+  (the caller's stream must support `Seek`).
 - **No extra managed dependencies**: the core library depends only on the .NET BCL — no
   third-party compression or COM interop packages.
 - **Multi-targeted**: the core library targets both **`net8.0`** (current LTS) and
@@ -112,6 +121,10 @@ For the full API (multi-volume archives, passwords, zip method selection, thread
 handling, native library loading details) see the
 [**API documentation**](./docs/api/SevenZipLite.en.md) ([中文](./docs/api/SevenZipLite.md)).
 
+> ⚠️ The NuGet package has not been published to nuget.org yet (see the "Releasing" section
+> below for the publishing plan). In the meantime, pack it locally with
+> [`scripts/pack-nuget.sh`](./scripts/pack-nuget.sh) and test against a local feed, or just add
+> a `ProjectReference` to this repo's `src/SevenZipLite/SevenZipLite.csproj`.
 
 ## Project structure
 
@@ -123,8 +136,9 @@ SevenZipLite/
 │   ├── SevenZipLite.SelfTest/     # Reusable self-test/perf/stress test runners (public API)
 │   └── SevenZipLite.Tests/        # Linux console self-test program (--stress runs the stress test)
 ├── samples/
-│   ├── SevenZipLite.AvaloniaDemo/ # Cross-platform Avalonia visual demo (Windows/Linux, Native AOT-published)
-│   └── SevenZipLite.MauiDemo/     # .NET MAUI (Android) demo
+│   ├── SevenZipLite.AvaloniaDemo/        # Cross-platform Avalonia visual demo (Windows/Linux, Native AOT-published)
+│   ├── SevenZipLite.MauiDemo/            # .NET MAUI (Android) demo
+│   └── SevenZipLite.AvaloniaAndroidDemo/ # Avalonia + Android crash repro/diagnostic tool (not a feature demo)
 ├── native/
 │   └── 7zip-src/                  # Official, unmodified 7-Zip source (kept as-is, used to build native libs locally)
 ├── native-libs/                   # Compiled native binaries per RID (see its README.md for provenance)
@@ -205,6 +219,21 @@ linux-x64}/`, or explains how to build/obtain the native library yourself.
 dotnet build samples/SevenZipLite.MauiDemo -f net10.0-android -c Debug -t:Run
 ```
 
+### Run the Avalonia + Android crash repro/diagnostic tool
+
+`samples/SevenZipLite.AvaloniaAndroidDemo` is a dedicated minimal repro tool, not a feature
+demo — see its [`README.md`](./samples/SevenZipLite.AvaloniaAndroidDemo/README.md) for what
+each test step checks and how it relates to the CoreCLR requirement under "Known limitations".
+
+```bash
+# Rule things out on desktop first
+dotnet run --project samples/SevenZipLite.AvaloniaAndroidDemo/SevenZipLite.AvaloniaAndroidDemo.Desktop
+
+# Then on Android (requires dotnet workload install android first)
+dotnet build samples/SevenZipLite.AvaloniaAndroidDemo/SevenZipLite.AvaloniaAndroidDemo.Android \
+  -f net10.0-android -c Debug -t:Run
+```
+
 ## Testing
 
 - **Correctness tests**: `SevenZipLite.SelfTest.SelfTestRunner.RunAll` — 13 test cases covering
@@ -282,6 +311,19 @@ git push origin v1.0.0
   `build`/`buildTransitive` mechanism; you need to wire it up manually following the
   `samples/SevenZipLite.MauiDemo` pattern (see the "Native library loading and platform
   requirements" section of the API docs).
+- **On Android you must explicitly switch to .NET 10's experimental CoreCLR runtime**
+  (`UseMonoRuntime=false` in your host project's `.csproj`, and it must target
+  `net10.0-android` or later). Regardless of UI framework — MAUI, Avalonia for Android, or any
+  other `.NET for Android` host — the default Mono runtime does not support
+  `System.Runtime.InteropServices.ComWrappers`, which this library's interop layer depends on;
+  calling any `CreateArchive`/`List`/`ExtractAll` throws `PlatformNotSupportedException`
+  (stack trace pointing at `ComWrappers.GetOrCreateObjectForComInstance`). See the ⚠️
+  subsection under "Native library loading and platform requirements" in the API docs for the
+  full rationale, limits (64-bit ABIs only), and exact fix. If you suspect this is what you're
+  hitting in your own project (or you still see a crash after setting `UseMonoRuntime=false`),
+  `samples/SevenZipLite.AvaloniaAndroidDemo` is a dedicated minimal repro/diagnostic tool that
+  lets you isolate the problem without wading through your own app's business logic and log
+  noise (see the README.md in that directory for usage).
 - `native/7zip-src` currently only has `build_linux.sh`; `build_windows.*`/`build_android.*`
   scripts don't exist yet — the Windows/Android native libraries are currently obtained/built
   manually and dropped into `native-libs/`. This is a known gap; contributions for those
